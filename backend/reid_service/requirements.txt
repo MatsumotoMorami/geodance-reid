@@ -1,0 +1,16 @@
+# fast-reid：克隆到 ~/Documents/Fast-ReID 后安装其 docs/requirements（去掉 faiss-gpu）+ torch；
+# Python 3.12 需打补丁 scripts/fastreid-py312.patch（collections.Mapping）。
+torch>=2.1.0
+torchvision>=0.16.0
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+ultralytics>=8.2.0
+certifi>=2024.0.0
+faiss-cpu>=1.8.0
+# 侧向/背面更强可选后端：pip install torchreid pillow
+# 并设 REID_EMBED_BACKEND=torchreid、TORCHREID_WEIGHTS（见 env.fastreid.example）
+pillow>=10.0.0
+pydantic>=2.0.0
+gdown>=5.0.0

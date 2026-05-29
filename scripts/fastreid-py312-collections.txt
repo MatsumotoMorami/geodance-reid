@@ -1,0 +1,14 @@
+在 Python 3.10+ 中，`collections.Mapping` 已迁至 `collections.abc`。
+若使用 Python 3.12 运行 fast-reid，请在克隆目录 ~/Documents/Fast-ReID 中修改：
+
+1) fastreid/evaluation/testing.py
+   将: from collections import Mapping, OrderedDict
+   改为:
+     from collections import OrderedDict
+     from collections.abc import Mapping
+
+2) fastreid/data/build.py
+   将: from collections import Mapping
+   改为: from collections.abc import Mapping
+
+本机已按上述修改。

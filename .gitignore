@@ -1,0 +1,49 @@
+# dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+build/
+
+# local env files
+.env
+.env.*
+!.env.example
+!*.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# model weights and generated ML artifacts
+*.pt
+*.pth
+*.onnx
+*.engine
+*.weights
+*.safetensors
+backend/reid_service/weights/
+backend/reid_service/checkpoints/
+backend/reid_service/runs/
+
+# generated/downloaded test media
+backend/reid_service/test_data/cam_*/
+backend/reid_service/test_data/_*/
+backend/reid_service/test_data/*.zip
+backend/reid_service/test_data_1080p/
+
+# local tool state
+.claude/
+
+# OS/editor files
+.DS_Store
