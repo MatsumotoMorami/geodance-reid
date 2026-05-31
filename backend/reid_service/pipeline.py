@@ -182,6 +182,153 @@ def _global_row_sort_key(row: dict[str, Any]) -> tuple[float, float]:
     return (-float(row.get("_conf", 0.0)), -area)
 
 
+def _unit_feature(v: np.ndarray) -> np.ndarray:
+    x = v.reshape(-1).astype(np.float64)
+    return (x / (float(np.linalg.norm(x)) + 1e-12)).astype(np.float32)
+
+
+def _row_feature_similarity(a: dict[str, Any], b: dict[str, Any]) -> float:
+    feats_a = [_unit_feature(a["_feat"])]
+    feats_b = [_unit_feature(b["_feat"])]
+    if a.get("_feat_alt") is not None:
+        feats_a.append(_unit_feature(a["_feat_alt"]))
+    if b.get("_feat_alt") is not None:
+        feats_b.append(_unit_feature(b["_feat_alt"]))
+    return max(float(np.dot(fa.astype(np.float64), fb.astype(np.float64))) for fa in feats_a for fb in feats_b)
+
+
+def _assign_cross_camera_tick_clusters(
+    flat: list[tuple[str, dict[str, Any]]],
+    gallery: CosineGallery,
+) -> set[int]:
+    if len(flat) < 2:
+        return set()
+    if os.environ.get("REID_TICK_CLUSTER", "1").strip().lower() in ("0", "false", "off", "no"):
+        return set()
+
+    threshold = float(os.environ.get("REID_TICK_CLUSTER_THRESHOLD", "0.54"))
+    min_margin = float(os.environ.get("REID_TICK_CLUSTER_MIN_MARGIN", "0.02"))
+    high_sim = float(os.environ.get("REID_TICK_CLUSTER_HIGH_SIM", "0.68"))
+    existing_match = float(os.environ.get("REID_TICK_CLUSTER_EXISTING_SIM", "0.58"))
+    existing_strong = float(os.environ.get("REID_TICK_CLUSTER_EXISTING_STRONG_SIM", "0.70"))
+    threshold = max(0.0, min(0.999, threshold))
+    min_margin = max(0.0, min(0.30, min_margin))
+    high_sim = max(threshold, min(0.999, high_sim))
+    existing_match = max(0.0, min(0.999, existing_match))
+    existing_strong = max(threshold, min(0.999, existing_strong))
+
+    candidates_by_i: dict[int, list[tuple[float, int]]] = {}
+    pair_sims: list[tuple[float, int, int]] = []
+    for i, (ci, ri) in enumerate(flat):
+        if ri.get("_no_new_id"):
+            continue
+        sims: list[tuple[float, int]] = []
+        for j, (cj, rj) in enumerate(flat):
+            if i == j or ci == cj or rj.get("_no_new_id"):
+                continue
+            s = _row_feature_similarity(ri, rj)
+            sims.append((s, j))
+            if i < j:
+                pair_sims.append((s, i, j))
+        sims.sort(key=lambda x: -x[0])
+        candidates_by_i[i] = sims
+
+    accepted: list[tuple[float, int, int]] = []
+    for s, i, j in pair_sims:
+        bi = candidates_by_i.get(i, [])
+        bj = candidates_by_i.get(j, [])
+        if not bi or not bj:
+            continue
+        if bi[0][1] != j or bj[0][1] != i:
+            continue
+        si2 = bi[1][0] if len(bi) > 1 else -1.0
+        sj2 = bj[1][0] if len(bj) > 1 else -1.0
+        mi = s - si2
+        mj = s - sj2
+        if s >= threshold and (s >= high_sim or (mi >= min_margin and mj >= min_margin)):
+            accepted.append((s, i, j))
+    if not accepted:
+        return set()
+
+    parent = list(range(len(flat)))
+    cameras: list[set[str]] = [{cid} for cid, _ in flat]
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> bool:
+        ra = find(a)
+        rb = find(b)
+        if ra == rb:
+            return True
+        if cameras[ra] & cameras[rb]:
+            return False
+        parent[rb] = ra
+        cameras[ra].update(cameras[rb])
+        return True
+
+    for s, i, j in sorted(accepted, key=lambda x: -x[0]):
+        union(i, j)
+
+    clusters: dict[int, list[int]] = {}
+    for i, (_, row) in enumerate(flat):
+        if row.get("_no_new_id"):
+            continue
+        clusters.setdefault(find(i), []).append(i)
+
+    assigned: set[int] = set()
+    for idxs in clusters.values():
+        if len(idxs) < 2:
+            continue
+
+        strong_existing: set[int] = set()
+        moderate_existing: set[int] = set()
+        for idx in idxs:
+            row = flat[idx][1]
+            gid, best, second = gallery.best_match_info(row["_feat"], feat_alt=row.get("_feat_alt"))
+            if gid is None:
+                continue
+            margin_ok = second < 0.0 or best - second >= gallery.min_margin
+            if not margin_ok:
+                continue
+            if best >= existing_strong:
+                strong_existing.add(int(gid))
+            elif best >= existing_match:
+                moderate_existing.add(int(gid))
+        if len(strong_existing) > 1:
+            continue
+        if len(moderate_existing) > 1 and not strong_existing:
+            continue
+
+        rep_idx = min(idxs, key=lambda k: _global_row_sort_key(flat[k][1]))
+        if strong_existing:
+            gid = next(iter(strong_existing))
+            rep_idx = -1
+        elif moderate_existing:
+            gid = next(iter(moderate_existing))
+            rep_idx = -1
+        else:
+            rep = flat[rep_idx][1]
+            gid = int(gallery.match_or_create(
+                rep["_feat"],
+                feat_alt=rep.get("_feat_alt"),
+                pose_vec=rep.get("_pose_vec"),
+                _debug_info="tick_cluster",
+            ))
+
+        for idx in idxs:
+            row = flat[idx][1]
+            row["globalPersonId"] = gid
+            if idx != rep_idx:
+                gallery.touch_ema(gid, row["_feat"], feat_alt=row.get("_feat_alt"))
+            assigned.add(idx)
+
+    return assigned
+
+
 def build_detections_payload(
     cameras: list[dict[str, str]] | None = None,
     namespace: str = "default",
@@ -352,7 +499,10 @@ def build_detections_payload(
             for row in t["strong_rows"]:
                 flat.append((cid, row))
         flat.sort(key=lambda cr: _global_row_sort_key(cr[1]))
-        for _cid, row in flat:
+        clustered = _assign_cross_camera_tick_clusters(flat, state.gallery)
+        for idx, (_cid, row) in enumerate(flat):
+            if idx in clustered:
+                continue
             if row.get("_no_new_id"):
                 row["globalPersonId"] = 0
             else:

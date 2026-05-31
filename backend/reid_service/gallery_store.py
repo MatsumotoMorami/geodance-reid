@@ -24,6 +24,7 @@ class CosineGallery:
         self.append_if_best_proto_below = float(os.environ.get("REID_APPEND_PROTO_IF_MAX_SIM_BELOW", "0.78"))
         self.append_if_best_proto_below = max(0.35, min(0.98, self.append_if_best_proto_below))
         self._protos: dict[int, list[np.ndarray]] = {}
+        self._pose_store: dict[int, list[np.ndarray]] = {}
         self._next_id = 1
 
     @staticmethod
@@ -65,6 +66,45 @@ class CosineGallery:
         else:
             plist[j] = self._ema_merge_unit(plist[j], rep)
 
+    def _dynamic_threshold(self, gid: int) -> float:
+        proto_count = len(self._protos.get(gid, []))
+        singleton_extra = float(os.environ.get("REID_SINGLETON_EXTRA_SIM", "0.02"))
+        multi_relax = float(os.environ.get("REID_MULTI_PROTO_RELAX", "0.04"))
+        singleton_extra = max(0.0, min(0.20, singleton_extra))
+        multi_relax = max(0.0, min(0.20, multi_relax))
+        if proto_count <= 1:
+            return min(0.999, self.threshold + singleton_extra)
+        return max(0.0, self.threshold - multi_relax)
+
+    def _remember_pose(self, gid: int, pose_vec: np.ndarray | None) -> None:
+        if pose_vec is None or pose_vec.size <= 0:
+            return
+        store = self._pose_store.setdefault(gid, [])
+        store.append(pose_vec.copy())
+        cap = int(os.environ.get("REID_POSE_STORE_PER_ID", "5"))
+        cap = max(1, min(20, cap))
+        while len(store) > cap:
+            store.pop(0)
+
+    def _create_id(self, rep: np.ndarray, pose_vec: np.ndarray | None = None) -> int:
+        gid = self._next_id
+        self._next_id += 1
+        self._protos[gid] = [rep.astype(np.float32)]
+        self._remember_pose(gid, pose_vec)
+        return gid
+
+    def best_match_info(self, feat: np.ndarray, *, feat_alt: np.ndarray | None = None) -> tuple[int | None, float, float]:
+        if not self._protos:
+            return None, -1.0, -1.0
+        f = self._norm_vec(feat)
+        f_alt = self._norm_vec(feat_alt) if feat_alt is not None else None
+        scored: list[tuple[int, float]] = [
+            (gid, self._max_sim_to_id(f, f_alt, plist)) for gid, plist in self._protos.items()
+        ]
+        scored.sort(key=lambda x: -x[1])
+        second_sim = scored[1][1] if len(scored) > 1 else -1.0
+        return scored[0][0], float(scored[0][1]), float(second_sim)
+
     def match_or_create(self, feat: np.ndarray, *, feat_alt: np.ndarray | None = None,
                         pose_vec: np.ndarray | None = None, _debug_info: str = "") -> int:
         f = self._norm_vec(feat)
@@ -72,9 +112,7 @@ class CosineGallery:
         rep = self._rep_for_store(f, f_alt)
 
         if not self._protos:
-            gid = self._next_id
-            self._next_id += 1
-            self._protos[gid] = [rep.astype(np.float32)]
+            gid = self._create_id(rep, pose_vec)
             self._log_match("NEW(first)", gid, -1, -1, -1, "empty gallery", _debug_info)
             return gid
 
@@ -84,34 +122,33 @@ class CosineGallery:
         scored.sort(key=lambda x: -x[1])
         best_id, best_sim = scored[0]
         second_sim = scored[1][1] if len(scored) > 1 else -1.0
+        margin = best_sim - second_sim
+        dyn_threshold = self._dynamic_threshold(best_id)
+        high_conf_sim = float(os.environ.get("REID_HIGH_CONF_MATCH_SIM", "0.72"))
+        high_conf_sim = max(0.0, min(0.999, high_conf_sim))
+        margin_ok = len(scored) == 1 or margin >= self.min_margin or best_sim >= high_conf_sim
 
-        if best_sim >= self.threshold:
+        if best_sim >= dyn_threshold and margin_ok:
             # Pose consistency check: if poses are drastically different,
             # this is likely a different person despite similar appearance
             if pose_vec is not None and pose_vec.size > 0:
-                stored_pose = self._protos[best_id][0]  # use first prototype's pose
-                # The prototype is appearance, not pose. We check pose separately
-                # by computing how "standing vs sitting" etc. differ
                 if not self._pose_consistent(pose_vec, best_id):
                     self._log_match("REJECT(pose)", best_id, best_sim, second_sim,
                                     best_sim - second_sim,
                                     f"pose inconsistent, creating new ID",
                                     _debug_info)
-                    gid = self._next_id
-                    self._next_id += 1
-                    self._protos[gid] = [rep.astype(np.float32)]
+                    gid = self._create_id(rep, pose_vec)
                     return gid
 
             self._upsert_prototypes_after_merge(best_id, rep, f, f_alt)
+            self._remember_pose(best_id, pose_vec)
             self._log_match("MATCH", best_id, best_sim, second_sim, best_sim - second_sim,
-                            f"thr={self.threshold:.3f} protos={len(self._protos[best_id])}",
+                            f"thr={dyn_threshold:.3f} protos={len(self._protos[best_id])}",
                             _debug_info)
             return best_id
 
-        gid = self._next_id
-        self._next_id += 1
-        self._protos[gid] = [rep.astype(np.float32)]
-        reason = f"sim={best_sim:.4f} < thr={self.threshold:.3f}"
+        gid = self._create_id(rep, pose_vec)
+        reason = f"sim={best_sim:.4f} < thr={dyn_threshold:.3f} or margin={margin:.4f} < {self.min_margin:.3f}"
         self._log_match("NEW", gid, best_sim, second_sim, best_sim - second_sim, reason, _debug_info)
         return gid
 
@@ -121,26 +158,16 @@ class CosineGallery:
         Since prototypes store appearance vectors, we use a simple heuristic:
         store recent pose vectors per ID and compare.
         """
-        if not hasattr(self, '_pose_store'):
-            self._pose_store: dict[int, list[np.ndarray]] = {}
         if gid not in self._pose_store:
             self._pose_store[gid] = []
         stored = self._pose_store[gid]
         if not stored:
-            # First sighting - store and accept
-            self._pose_store[gid].append(pose_vec.copy())
-            if len(self._pose_store[gid]) > 5:
-                self._pose_store[gid].pop(0)
             return True
         # Check against stored poses
         from pose_feature import pose_similarity
         max_sim = max(pose_similarity(pose_vec, s) for s in stored)
-        is_ok = max_sim >= 0.35
-        if is_ok:
-            self._pose_store[gid].append(pose_vec.copy())
-            if len(self._pose_store[gid]) > 5:
-                self._pose_store[gid].pop(0)
-        return is_ok
+        min_pose_sim = float(os.environ.get("REID_POSE_MIN_SIM", "0.35"))
+        return max_sim >= min_pose_sim
 
     @staticmethod
     def _log_match(action: str, gid: int, best_sim: float, second_sim: float, margin: float,
@@ -159,10 +186,7 @@ class CosineGallery:
         f = self._norm_vec(feat)
         f_alt = self._norm_vec(feat_alt) if feat_alt is not None else None
         rep = self._rep_for_store(f, f_alt)
-        gid = self._next_id
-        self._next_id += 1
-        self._protos[gid] = [rep.astype(np.float32)]
-        return gid
+        return self._create_id(rep)
 
     def touch_ema(self, gid: int, feat: np.ndarray, *, feat_alt: np.ndarray | None = None) -> None:
         if gid not in self._protos:
