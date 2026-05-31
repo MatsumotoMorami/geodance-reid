@@ -427,6 +427,14 @@ a.btn {
   line-height: 1;
 }
 
+.stat-card strong.compact-value {
+  max-width: 100%;
+  font-size: clamp(16px, 2vw, 22px);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .stat-card.primary {
   background: var(--danger-soft);
 }

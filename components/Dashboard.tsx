@@ -354,11 +354,21 @@ function DetectionPreviewTile({ cam, payload }: { cam: CameraDef; payload: DemoP
   );
 }
 
-function StatCard({ label, value, tone = "default" }: { label: string; value: string | number; tone?: "default" | "primary" | "muted" }) {
+function StatCard({
+  label,
+  value,
+  tone = "default",
+  compactValue = false,
+}: {
+  label: string;
+  value: string | number;
+  tone?: "default" | "primary" | "muted";
+  compactValue?: boolean;
+}) {
   return (
     <div className={`stat-card ${tone}`}>
       <p>{label}</p>
-      <strong>{value}</strong>
+      <strong className={compactValue ? "compact-value" : undefined}>{value}</strong>
     </div>
   );
 }
@@ -438,7 +448,7 @@ export function SettingsPage() {
           <h1>Camera Admin</h1>
         </div>
         <div className="hero-stats">
-          <StatCard label="当前用户" value={user.username} tone="muted" />
+          <StatCard label="当前用户" value={user.username} tone="muted" compactValue />
           <StatCard label="摄像头" value={user.cameras.length} tone="primary" />
         </div>
       </header>
