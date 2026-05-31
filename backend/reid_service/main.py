@@ -36,6 +36,16 @@ class ModeRequest(BaseModel):
     mode: str  # "camera" | "dataset"
 
 
+class CameraRequest(BaseModel):
+    id: str
+    url: str
+
+
+class DetectionsRequest(BaseModel):
+    namespace: str = "default"
+    cameras: list[CameraRequest] = []
+
+
 @app.get("/mode")
 def get_mode() -> dict[str, str]:
     m = get_data_mode()
@@ -81,6 +91,17 @@ def preview_frame(camera_id: str) -> Response:
 def detections() -> JSONResponse:
     try:
         body = build_detections_payload()
+        return JSONResponse(content=body)
+    except Exception as e:
+        msg = f"{e}\n{traceback.format_exc()[-4000:]}"
+        return JSONResponse(status_code=500, content={"error": "REID_PIPELINE_FAILED", "message": msg})
+
+
+@app.post("/detections")
+def detections_for_cameras(req: DetectionsRequest) -> JSONResponse:
+    try:
+        cameras = [{"id": c.id, "url": c.url} for c in req.cameras]
+        body = build_detections_payload(cameras=cameras, namespace=req.namespace)
         return JSONResponse(content=body)
     except Exception as e:
         msg = f"{e}\n{traceback.format_exc()[-4000:]}"

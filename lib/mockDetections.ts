@@ -1,4 +1,5 @@
 import { CAMERAS } from "./cameras";
+import type { CameraDef } from "./cameras";
 import type { CameraFrame, DemoPayload, Detection, NormBox } from "./types";
 
 /** 模拟：若干「真实人」在哪些摄像头里同时出现（跨镜 Re-ID 同源） */
@@ -49,10 +50,10 @@ function jitter(box: NormBox, seed: number, amp: number): NormBox {
   };
 }
 
-export function buildDemoPayload(tick: number): DemoPayload {
+export function buildDemoPayload(tick: number, cameras: CameraDef[] = CAMERAS): DemoPayload {
   const frames: CameraFrame[] = [];
 
-  for (const cam of CAMERAS) {
+  for (const cam of cameras) {
     const dets: Detection[] = [];
     for (const p of BASE_PEOPLE) {
       const raw = p.appearances[cam.id];
@@ -73,7 +74,7 @@ export function buildDemoPayload(tick: number): DemoPayload {
   const galleryIds = new Set(BASE_PEOPLE.map((p) => p.globalId));
 
   const stats = {
-    cameras: CAMERAS.map((c) => {
+    cameras: cameras.map((c) => {
       const f = frames.find((fr) => fr.cameraId === c.id);
       const n = f?.detections.length ?? 0;
       return {

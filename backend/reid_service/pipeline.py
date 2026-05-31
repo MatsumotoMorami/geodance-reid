@@ -23,9 +23,16 @@ from reid_embedder_factory import get_embedder
 from test_data_source import grab_test_frame, reset_test_state, test_camera_list, test_dataset_has_data
 from yolo_detect import detect_persons
 
-_gallery = CosineGallery()
-_cam_trackers: dict[str, PerCameraTracker] = {}
 _data_mode: str = "camera"  # "camera" | "dataset"
+
+
+class PipelineState:
+    def __init__(self) -> None:
+        self.gallery = CosineGallery()
+        self.cam_trackers: dict[str, PerCameraTracker] = {}
+
+
+_states: dict[str, PipelineState] = {"default": PipelineState()}
 
 
 def get_data_mode() -> str:
@@ -39,16 +46,24 @@ def set_data_mode(mode: str) -> None:
         raise ValueError(f"invalid mode: {mode}")
     if mode != _data_mode:
         _data_mode = mode
-        _gallery._protos.clear()
-        _gallery._next_id = 1
-        _cam_trackers.clear()
+        _states.clear()
+        _states["default"] = PipelineState()
         reset_test_state()
 
 
-def _tracker_for(camera_id: str) -> PerCameraTracker:
-    if camera_id not in _cam_trackers:
-        _cam_trackers[camera_id] = PerCameraTracker()
-    return _cam_trackers[camera_id]
+def _state_for(namespace: str) -> PipelineState:
+    ns = namespace.strip() if namespace else "default"
+    if not ns:
+        ns = "default"
+    if ns not in _states:
+        _states[ns] = PipelineState()
+    return _states[ns]
+
+
+def _tracker_for(state: PipelineState, camera_id: str) -> PerCameraTracker:
+    if camera_id not in state.cam_trackers:
+        state.cam_trackers[camera_id] = PerCameraTracker()
+    return state.cam_trackers[camera_id]
 
 
 def _gallery_max_tta_enabled() -> bool:
@@ -167,7 +182,10 @@ def _global_row_sort_key(row: dict[str, Any]) -> tuple[float, float]:
     return (-float(row.get("_conf", 0.0)), -area)
 
 
-def build_detections_payload() -> dict[str, Any]:
+def build_detections_payload(
+    cameras: list[dict[str, str]] | None = None,
+    namespace: str = "default",
+) -> dict[str, Any]:
     """
     抓帧 → YOLO → Re-ID 特征 → 绑定 globalPersonId。
     默认 REID_GLOBAL_MATCH_ORDER=1：同一次采样内全路强检框按置信度与框面积排序后统一 match_or_create，再按路挂轨迹，
@@ -175,6 +193,7 @@ def build_detections_payload() -> dict[str, Any]:
     关 REID_GLOBAL_MATCH_ORDER=0 则恢复为按摄像头顺序各自进画廊（与旧版一致）。
     """
     embedder = get_embedder()
+    state = _state_for(namespace)
     max_tta = _gallery_max_tta_enabled()
     pad = float(os.environ.get("CROP_PAD", "0.1"))
     min_side = int(os.environ.get("CROP_MIN_SIDE", "24"))
@@ -186,7 +205,7 @@ def build_detections_payload() -> dict[str, Any]:
     if _data_mode == "dataset":
         active_cameras = test_camera_list()
     else:
-        active_cameras = [dict(c) for c in CAMERAS]
+        active_cameras = [dict(c) for c in (cameras if cameras is not None else CAMERAS)]
 
     by_id: dict[str, Any] = {}
     if _data_mode == "dataset":
@@ -337,7 +356,7 @@ def build_detections_payload() -> dict[str, Any]:
             if row.get("_no_new_id"):
                 row["globalPersonId"] = 0
             else:
-                row["globalPersonId"] = int(_gallery.match_or_create(
+                row["globalPersonId"] = int(state.gallery.match_or_create(
                     row["_feat"], feat_alt=row.get("_feat_alt"),
                     pose_vec=row.get("_pose_vec"),
                 ))
@@ -382,23 +401,23 @@ def build_detections_payload() -> dict[str, Any]:
         demoted_rows: list[dict[str, Any]] = []  # _no_new_id → couldn't match → show as weak
         if tr_on:
             if use_global:
-                _tracker_for(cid).ingest_assigned_global_ids(strong_rows)
+                _tracker_for(state, cid).ingest_assigned_global_ids(strong_rows)
             else:
-                _tracker_for(cid).assign_global_ids(strong_rows, _gallery)
+                _tracker_for(state, cid).assign_global_ids(strong_rows, state.gallery)
         else:
             if not use_global:
                 for row in strong_rows:
                     if row.get("_no_new_id"):
                         row["globalPersonId"] = 0
                     else:
-                        row["globalPersonId"] = int(_gallery.match_or_create(
+                        row["globalPersonId"] = int(state.gallery.match_or_create(
                             row["_feat"], feat_alt=row.get("_feat_alt"),
                             pose_vec=row.get("_pose_vec"),
                         ))
 
-        _split_same_frame_reused_global_ids(strong_rows, _gallery)
+        _split_same_frame_reused_global_ids(strong_rows, state.gallery)
         if tr_on:
-            _tracker_for(cid).sync_gids_after_split(strong_rows)
+            _tracker_for(state, cid).sync_gids_after_split(strong_rows)
         for row in strong_rows:
             gid = int(row["globalPersonId"])
             if gid > 0:
@@ -458,8 +477,8 @@ def build_detections_payload() -> dict[str, Any]:
                 "embedFailures": embed_fail,
             }
             if tr_on:
-                st["activeTracks"] = _tracker_for(cid).active_track_count()
-                st["dormantTracks"] = _tracker_for(cid).dormant_count()
+                st["activeTracks"] = _tracker_for(state, cid).active_track_count()
+                st["dormantTracks"] = _tracker_for(state, cid).dormant_count()
             per_cam_stats.append(st)
         frames.append({"cameraId": cid, "online": True, "detections": dets_out})
 
@@ -483,7 +502,7 @@ def build_detections_payload() -> dict[str, Any]:
 
     now = int(time.time() * 1000)
     interval = int(os.environ.get("SAMPLE_INTERVAL_MS", "3000"))
-    gallery_n = _gallery.gallery_size()
+    gallery_n = state.gallery.gallery_size()
     out: dict[str, Any] = {
         "updatedAt": now,
         "sampleIntervalMs": interval,

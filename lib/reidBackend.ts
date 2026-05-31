@@ -1,5 +1,11 @@
 import type { CameraFrame, DemoPayload, Detection, NormBox } from "./types";
-import { CAMERAS } from "./cameras";
+import { CAMERAS, type CameraDef } from "./cameras";
+
+export type ReidBackendCameraRequest = {
+  namespace: string;
+  idPrefix: string;
+  cameras: Array<{ id: string; url: string }>;
+};
 
 /**
  * 识别后端 → 前端 的 JSON 约定（GET 返回体）。
@@ -185,16 +191,28 @@ export function normalizeDetectionsPayload(raw: unknown): DemoPayload {
   };
 }
 
-/** 补全硬编码摄像头列表中缺失的路（保留 payload 中原有的未知摄像头） */
-export function ensureAllCameras(body: DemoPayload): DemoPayload {
+function stripCameraIdPrefix(body: DemoPayload, prefix: string): DemoPayload {
+  if (!prefix) return body;
+  const strip = (cameraId: string) => (cameraId.startsWith(prefix) ? cameraId.slice(prefix.length) : cameraId);
+  return {
+    ...body,
+    frames: body.frames.map((f) => ({ ...f, cameraId: strip(f.cameraId) })),
+    ...(body.stats
+      ? { stats: { cameras: body.stats.cameras.map((c) => ({ ...c, cameraId: strip(c.cameraId) })) } }
+      : {}),
+  };
+}
+
+/** 补全当前用户摄像头列表中缺失的路（保留 payload 中原有的未知摄像头） */
+export function ensureAllCameras(body: DemoPayload, cameras: CameraDef[] = CAMERAS): DemoPayload {
   const existing = new Map(body.frames.map((f) => [f.cameraId, f]));
   const merged: CameraFrame[] = [];
   // First, emit all payload frames (includes test cameras like cam_0, etc.)
   for (const f of body.frames) {
     merged.push(f);
   }
-  // Then, add any missing hardcoded cameras
-  for (const c of CAMERAS) {
+  // Then, add any missing configured cameras
+  for (const c of cameras) {
     if (!existing.has(c.id)) {
       merged.push({ cameraId: c.id, online: false, detections: [] });
     }
@@ -202,16 +220,27 @@ export function ensureAllCameras(body: DemoPayload): DemoPayload {
   return { ...body, frames: merged };
 }
 
-export async function fetchDetectionsFromBackend(url: string): Promise<DemoPayload> {
+export async function fetchDetectionsFromBackend(
+  url: string,
+  cameras: CameraDef[] = CAMERAS,
+  backendCameras?: ReidBackendCameraRequest,
+): Promise<DemoPayload> {
   const ms = backendFetchTimeoutMs();
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
+    const method = backendCameras ? "POST" : "GET";
     const r = await fetch(url, {
-      method: "GET",
+      method,
       cache: "no-store",
       signal: ctrl.signal,
-      headers: { Accept: "application/json" },
+      headers: {
+        Accept: "application/json",
+        ...(backendCameras ? { "Content-Type": "application/json" } : {}),
+      },
+      ...(backendCameras
+        ? { body: JSON.stringify({ namespace: backendCameras.namespace, cameras: backendCameras.cameras }) }
+        : {}),
     });
     const text = await r.text();
     if (!r.ok) {
@@ -223,7 +252,11 @@ export async function fetchDetectionsFromBackend(url: string): Promise<DemoPaylo
     } catch {
       throw new Error("backend response is not JSON");
     }
-    return ensureAllCameras(normalizeDetectionsPayload(json));
+    let payload = normalizeDetectionsPayload(json);
+    if (backendCameras) {
+      payload = stripCameraIdPrefix(payload, backendCameras.idPrefix);
+    }
+    return ensureAllCameras(payload, cameras);
   } catch (e) {
     const aborted =
       (e instanceof DOMException && e.name === "AbortError") ||
@@ -282,12 +315,12 @@ export async function setReidMode(mode: "camera" | "dataset"): Promise<{ mode: s
 }
 
 /** 识别后端最近一次采样时该路的 JPEG（/preview/<cameraId>），仅服务端可用。 */
-export function getReidPreviewUpstreamUrl(cameraId: string): string | undefined {
+export function getReidPreviewUpstreamUrl(cameraId: string, upstreamCameraId = cameraId): string | undefined {
   const d = getReidDetectionsUrl();
   if (!d) return undefined;
   try {
     const u = new URL(d);
-    u.pathname = `/preview/${encodeURIComponent(cameraId)}`;
+    u.pathname = `/preview/${encodeURIComponent(upstreamCameraId)}`;
     u.search = "";
     return u.toString();
   } catch {

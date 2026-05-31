@@ -2,6 +2,8 @@
 
 室内多 RTSP 摄像头行人检测与跨镜 Re-ID 展示系统。前端使用 Next.js 展示实时摄像头画面，后端使用 YOLO + Re-ID 服务按低采样率做行人检测、跨摄像头 ID 合并，并返回当前可见人数。
 
+项目内置登录系统。每个用户登录后都有自己的摄像头管理面板，可以添加、删除 RTSP 摄像头；实时预览、识别请求和识别帧预览都会使用当前登录用户的摄像头列表。
+
 ## 运行环境
 
 - Node.js 20+
@@ -128,6 +130,50 @@ http://localhost:3000
 
 前端会通过 `/api/rtsp/<cameraId>` 实时转码 RTSP 画面，通过 `/api/detections` 轮询后端识别结果，并在画面上叠加人框和全局 ID。
 
+## 登录与用户数据
+
+项目没有开放注册。部署前在项目根目录 `.env.local` 中添加管理员登录信息：
+
+```bash
+AUTH_ADMIN_USERNAME=admin
+AUTH_ADMIN_PASSWORD=换成至少8位的强密码
+```
+
+首次启动时，如果本地用户数据文件里还没有任何用户，Next.js 会用上面两个变量初始化管理员账号。管理员用户会复制当前默认摄像头列表，登录后可从导航栏进入 `Camera Admin` 设置页调整。
+
+用户、密码哈希和每个用户的摄像头配置保存在本地：
+
+```text
+data/app-store.json
+```
+
+该文件已被 `.gitignore` 排除，不会提交到仓库。如果你改了 `AUTH_ADMIN_USERNAME` 或 `AUTH_ADMIN_PASSWORD`，但 `data/app-store.json` 已经存在且里面已有用户，旧用户不会自动覆盖；需要删除该文件后重启，或直接编辑/迁移数据。
+
+需要把用户数据放到其他位置时，可设置：
+
+```bash
+AUTH_STORE_PATH=/absolute/path/to/app-store.json
+```
+
+登录成功后，浏览器会保存 HttpOnly 会话 cookie。退出登录会清除该 cookie。
+
+## 摄像头管理
+
+登录后可从导航栏进入 `Camera Admin` 设置页添加和删除摄像头。添加时需要：
+
+- `ID`：只允许字母、数字、下划线和连字符，例如 `room`、`stairs_1`
+- `名称`：页面显示名
+- `RTSP 地址`：必须以 `rtsp://` 或 `rtsps://` 开头
+- `类型`：普通、低可用、低清
+
+当前用户的摄像头列表会同时用于：
+
+- `/api/rtsp/<cameraId>` 实时 MJPEG 预览
+- `/api/detections` 向 Python Re-ID 后端发送当前用户的摄像头列表
+- `/api/detection-preview/<cameraId>` 读取同一次采样的识别帧缓存
+
+Python 后端的 `GET /detections` 仍保留静态默认摄像头列表；Next.js 实际使用的是 `POST /detections`，请求体会携带当前用户的摄像头列表和用户命名空间，避免不同用户的预览缓存和 Re-ID 画廊混用。
+
 ## 测试数据模式
 
 没有稳定 RTSP 或想先验证 Re-ID 流程时，可以生成本地测试帧：
@@ -137,16 +183,18 @@ cd backend/reid_service
 python prepare_test_data.py
 ```
 
-然后启动后端和前端，在页面里切换到 dataset/test data 模式。后端会读取 `backend/reid_service/test_data/cam_*` 作为虚拟摄像头。
+然后启动后端和前端，点击首页导航栏的 `Data Mode` 按钮切换到测试集模式。后端会读取 `backend/reid_service/test_data/cam_*` 作为虚拟摄像头。
 
 ## 摄像头配置
 
-摄像头列表在两个地方保持一致：
+默认新用户摄像头列表来自两个静态文件：
 
 - 前端：`lib/cameras.ts`
 - 后端：`backend/reid_service/cameras_data.py`
 
-当前代码中部分低可用或低清摄像头被注释。需要启用时，同时取消两处对应摄像头注释：
+登录后的实际摄像头列表优先使用 `data/app-store.json` 中当前用户自己的配置。若需要调整新用户初始列表，修改 `lib/cameras.ts`；若需要直接调用 Python `GET /detections`，则同步修改 `backend/reid_service/cameras_data.py`。
+
+当前默认列表中部分低可用或低清摄像头被注释。需要默认启用时，同时取消两处对应摄像头注释：
 
 - `stairs_1`
 - `stairs_2`

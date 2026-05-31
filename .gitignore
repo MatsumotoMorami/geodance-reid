@@ -12,6 +12,10 @@ build/
 !.env.example
 !*.env.example
 
+# local application data
+data/*.json
+data/*.json.tmp
+
 # Python
 __pycache__/
 *.py[cod]

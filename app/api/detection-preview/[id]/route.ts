@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
+import { isAuthResponse, requireUser } from "@/lib/apiAuth";
 import { getReidPreviewUpstreamUrl } from "@/lib/reidBackend";
+import { backendCameraIdForUser, findUserCamera } from "@/lib/userCameraRouting";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function previewFetchTimeoutMs(): number {
@@ -10,12 +13,20 @@ function previewFetchTimeoutMs(): number {
   return 15_000;
 }
 
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const user = requireUser(req);
+  if (isAuthResponse(user)) return user;
+
   const { id } = await ctx.params;
   if (!id || id.includes("..") || id.includes("/")) {
     return NextResponse.json({ error: "INVALID_ID" }, { status: 400 });
   }
-  const upstream = getReidPreviewUpstreamUrl(id);
+  const userCamera = findUserCamera(user, id);
+  if (!userCamera && !id.startsWith("cam_")) {
+    return NextResponse.json({ error: "UNKNOWN_CAMERA" }, { status: 404 });
+  }
+  const upstreamId = userCamera ? backendCameraIdForUser(user, id) : id;
+  const upstream = getReidPreviewUpstreamUrl(id, upstreamId);
   if (!upstream) {
     return NextResponse.json(
       { error: "NO_REID_BACKEND", message: "未设置 REID_DETECTIONS_URL（模拟模式无识别帧）" },

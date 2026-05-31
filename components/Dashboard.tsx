@@ -1,13 +1,50 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { CameraFrame, DemoPayload } from "@/lib/types";
-import { CAMERAS, type CameraDef } from "@/lib/cameras";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import type { CameraFrame, DemoPayload, DetectionsDebugCamera } from "@/lib/types";
+import type { CameraDef, CameraTier } from "@/lib/cameras";
 
-function tierNote(cam: CameraDef): string {
-  if (cam.tier === "low_availability") return "低可用（更长 socket 超时 + 略降帧）";
-  if (cam.tier === "low_resolution") return "低清（降分辨率推流）";
-  return "";
+export type AuthUser = {
+  id: string;
+  username: string;
+  cameras: CameraDef[];
+  camerasUpdatedAt: number;
+};
+
+const CAMERA_TIERS: Array<{ value: CameraTier; label: string; hint: string }> = [
+  { value: "normal", label: "普通", hint: "标准拉流" },
+  { value: "low_availability", label: "低可用", hint: "更长超时" },
+  { value: "low_resolution", label: "低清", hint: "低清优化" },
+];
+
+function tierLabel(tier: CameraTier): string {
+  return CAMERA_TIERS.find((t) => t.value === tier)?.label ?? "普通";
+}
+
+function slugFromValue(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^rtsps?:\/\//, "")
+    .split("/")
+    .pop()
+    ?.replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64) || "";
+}
+
+function debugSummary(stat?: DetectionsDebugCamera): string | null {
+  if (!stat) return null;
+  const raw = stat.yoloRawPersons !== undefined ? `原始 ${stat.yoloRawPersons} / NMS ${stat.yoloPersons}` : `YOLO ${stat.yoloPersons}`;
+  const passed = stat.passedConf !== undefined
+    ? `过检 ${stat.passedConf}/${stat.passedMinSide ?? "?"}/${stat.passedShape ?? "?"}`
+    : "";
+  const tracks = stat.activeTracks !== undefined ? `轨迹 ${stat.activeTracks}` : "";
+  const dormant = stat.dormantTracks !== undefined ? `休眠 ${stat.dormantTracks}` : "";
+  return [raw, passed, `框 ${stat.outputBoxes}`, `弱框 ${stat.weakOutputBoxes ?? 0}`, `失败 ${stat.embedFailures}`, tracks, dormant]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function DetectionOverlays({ frame }: { frame: CameraFrame }) {
@@ -18,38 +55,19 @@ function DetectionOverlays({ frame }: { frame: CameraFrame }) {
         .map((d, idx) => {
           const { x, y, w, h } = d.box;
           const weak = Boolean(d.lowConfidence);
-          const border = weak ? "2px solid #f59e0b" : "2px solid #84cc16";
-          const tagBg = weak ? "#f59e0b" : "#84cc16";
-          const tagColor = weak ? "#111" : "#000";
           const confStr = d.confidence !== undefined ? ` ${(d.confidence * 100).toFixed(0)}%` : "";
           return (
             <div
+              className={`reid-box ${weak ? "is-weak" : "is-strong"}`}
               key={`${frame.cameraId}-${d.globalPersonId}-${weak ? "w" : "s"}-${idx}`}
               style={{
-                position: "absolute",
-                zIndex: weak ? 1 : 2,
                 left: `${x * 100}%`,
                 top: `${y * 100}%`,
                 width: `${w * 100}%`,
                 height: `${h * 100}%`,
-                border,
-                pointerEvents: "none",
               }}
             >
-              <span
-                style={{
-                  position: "absolute",
-                  left: 0,
-                  top: -18,
-                  background: tagBg,
-                  color: tagColor,
-                  fontSize: 12,
-                  padding: "0 4px",
-                  fontWeight: 700,
-                }}
-              >
-                {weak ? `低置信${confStr}` : `ID ${d.globalPersonId}`}
-              </span>
+              <span>{weak ? `低置信${confStr}` : `ID ${d.globalPersonId}`}</span>
             </div>
           );
         })}
@@ -57,7 +75,180 @@ function DetectionOverlays({ frame }: { frame: CameraFrame }) {
   );
 }
 
-/** 仅实时 MJPEG，不在画面上叠检测框 */
+function LoginPanel({ onAuthed }: { onAuthed: (user: AuthUser) => void }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function submit() {
+    setErr(null);
+    setLoading(true);
+    try {
+      const r = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+        cache: "no-store",
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error((j as { message?: string }).message || `HTTP ${r.status}`);
+      onAuthed((j as { user: AuthUser }).user);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <main className="auth-shell">
+      <section className="auth-card card">
+        <div className="brand-stack">
+          <div className="brand-mark">Gd</div>
+          <p className="eyebrow">GeoDance Re-ID</p>
+          <h1>欢迎回来</h1>
+        </div>
+
+        <div className="form-stack">
+          <label>
+            <span>用户名</span>
+            <input
+              className="input"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoComplete="username"
+              placeholder="admin"
+            />
+          </label>
+          <label>
+            <span>密码</span>
+            <input
+              className="input"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              placeholder="至少 8 位"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void submit();
+              }}
+            />
+          </label>
+          <button className="btn btn-primary" type="button" disabled={loading} onClick={() => void submit()}>
+            {loading ? "登录中..." : "登录"}
+          </button>
+          {err ? <div className="alert alert-error">{err}</div> : null}
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function CameraAdminPanel({
+  user,
+  cameras,
+  onUserChanged,
+}: {
+  user: AuthUser;
+  cameras: CameraDef[];
+  onUserChanged: (user: AuthUser) => void;
+}) {
+  const [id, setId] = useState("");
+  const [label, setLabel] = useState("");
+  const [rtspPath, setRtspPath] = useState("");
+  const [tier, setTier] = useState<CameraTier>("normal");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const addCamera = async () => {
+    setErr(null);
+    setBusy(true);
+    try {
+      const finalId = id.trim() || slugFromValue(label || rtspPath);
+      const r = await fetch("/api/cameras", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: finalId, label: label.trim() || finalId, rtspPath, tier }),
+        cache: "no-store",
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error((j as { message?: string }).message || `HTTP ${r.status}`);
+      onUserChanged((j as { user: AuthUser }).user);
+      setId("");
+      setLabel("");
+      setRtspPath("");
+      setTier("normal");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteCamera = async (cameraId: string) => {
+    setErr(null);
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/cameras/${encodeURIComponent(cameraId)}`, {
+        method: "DELETE",
+        cache: "no-store",
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error((j as { message?: string }).message || `HTTP ${r.status}`);
+      onUserChanged((j as { user: AuthUser }).user);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card control-card">
+      <div className="section-head">
+        <div>
+          <p className="eyebrow">Camera Admin</p>
+          <h2>我的摄像头</h2>
+        </div>
+        <span className="badge badge-info">{user.username} · {cameras.length} 路</span>
+      </div>
+
+      <div className="camera-form">
+        <input className="input" placeholder="ID，如 room" value={id} onChange={(e) => setId(e.target.value)} />
+        <input className="input" placeholder="名称" value={label} onChange={(e) => setLabel(e.target.value)} />
+        <input className="input input-wide" placeholder="rtsp://..." value={rtspPath} onChange={(e) => setRtspPath(e.target.value)} />
+        <select className="input" value={tier} onChange={(e) => setTier(e.target.value as CameraTier)}>
+          {CAMERA_TIERS.map((t) => (
+            <option key={t.value} value={t.value}>{t.label} · {t.hint}</option>
+          ))}
+        </select>
+        <button className="btn btn-primary" type="button" disabled={busy} onClick={() => void addCamera()}>
+          添加
+        </button>
+      </div>
+
+      {err ? <div className="alert alert-error compact">{err}</div> : null}
+
+      <div className="camera-list">
+        {cameras.map((cam) => (
+          <div className="camera-row" key={cam.id}>
+            <div className="camera-main">
+              <strong>{cam.label}</strong>
+              <span>{cam.id} · {tierLabel(cam.tier)}</span>
+            </div>
+            <code>{cam.rtspPath}</code>
+            <button className="btn btn-danger" type="button" disabled={busy} onClick={() => void deleteCamera(cam.id)}>
+              删除
+            </button>
+          </div>
+        ))}
+        {cameras.length === 0 ? <div className="empty-line">当前用户还没有摄像头。</div> : null}
+      </div>
+    </section>
+  );
+}
+
 function CameraStreamTile({
   cam,
   streamIndex,
@@ -65,26 +256,14 @@ function CameraStreamTile({
 }: {
   cam: CameraDef;
   streamIndex: number;
-  debugStat?: {
-    yoloPersons: number;
-    yoloRawPersons?: number;
-    outputBoxes: number;
-    embedFailures: number;
-    online: boolean;
-    passedConf?: number;
-    passedMinSide?: number;
-    passedShape?: number;
-    weakOutputBoxes?: number;
-    activeTracks?: number;
-    dormantTracks?: number;
-  };
+  debugStat?: DetectionsDebugCamera;
 }) {
   const [streamKey, setStreamKey] = useState(0);
   const [streamError, setStreamError] = useState(false);
-  /** 生产环境立即挂 img，避免首屏长期停在「准备拉流」；dev 仍错峰拉流 */
   const [streamReady, setStreamReady] = useState(() => process.env.NODE_ENV !== "development");
 
   const staggerMs = process.env.NODE_ENV === "development" ? streamIndex * 220 : 0;
+  const debug = debugSummary(debugStat);
 
   useEffect(() => {
     if (staggerMs === 0) {
@@ -95,108 +274,39 @@ function CameraStreamTile({
     return () => clearTimeout(t);
   }, [staggerMs]);
 
-  const streamSrc = `/api/rtsp/${cam.id}?r=${streamKey}`;
-
   return (
-    <div
-      style={{
-        position: "relative",
-        border: "1px solid #444",
-        background: "#000",
-        minHeight: 180,
-        overflow: "visible",
-      }}
-    >
-      <div style={{ padding: "4px 6px", fontSize: 12, borderBottom: "1px solid #333" }}>
-        <strong>{cam.label}</strong>
-        {tierNote(cam) ? <span style={{ color: "#888", marginLeft: 6 }}>{tierNote(cam)}</span> : null}
-        <div style={{ color: "#666", fontSize: 10, wordBreak: "break-all" }}>{cam.rtspPath}</div>
-        {debugStat ? (
-          <div style={{ color: "#6a9", fontSize: 10, marginTop: 2 }}>
-            调试: online={String(debugStat.online)} YOLO
-            {debugStat.yoloRawPersons !== undefined
-              ? `原始=${debugStat.yoloRawPersons} NMS后=${debugStat.yoloPersons}`
-              : `=${debugStat.yoloPersons}`}
-            {debugStat.passedConf !== undefined
-              ? ` 过置信度=${debugStat.passedConf} 过边=${debugStat.passedMinSide ?? "?"} 过形=${debugStat.passedShape ?? "?"}`
-              : null}{" "}
-            框={debugStat.outputBoxes}
-            {debugStat.weakOutputBoxes !== undefined ? ` 低置信框=${debugStat.weakOutputBoxes}` : ""}{" "}
-            ReID失败={debugStat.embedFailures}
-            {debugStat.activeTracks !== undefined ? ` 轨迹=${debugStat.activeTracks}` : ""}
-            {debugStat.dormantTracks !== undefined ? ` 休眠=${debugStat.dormantTracks}` : ""}
-          </div>
-        ) : null}
+    <article className="media-card">
+      <div className="tile-head">
+        <div>
+          <h3>{cam.label}</h3>
+          <code>{cam.rtspPath}</code>
+        </div>
+        <span className={`badge ${cam.tier === "normal" ? "badge-info" : "badge-warning"}`}>{tierLabel(cam.tier)}</span>
       </div>
 
-      <div
-        style={{
-          position: "relative",
-          width: "100%",
-          aspectRatio: "16 / 9",
-          minHeight: 158,
-          background: "#222",
-          overflow: "hidden",
-        }}
-      >
+      <div className="video-frame">
         {streamReady ? (
           <img
-            src={streamSrc}
+            src={`/api/rtsp/${cam.id}?r=${streamKey}`}
             alt=""
             loading="eager"
             decoding="async"
             onLoad={() => setStreamError(false)}
             onError={() => setStreamError(true)}
-            style={{
-              position: "relative",
-              zIndex: 0,
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              display: "block",
-              filter: cam.tier === "low_resolution" ? "blur(0.6px) contrast(0.95)" : undefined,
-            }}
+            className={cam.tier === "low_resolution" ? "low-res-stream" : undefined}
           />
         ) : (
-          <div
-            style={{
-              width: "100%",
-              height: "100%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#888",
-              fontSize: 12,
-              padding: 8,
-              textAlign: "center",
-            }}
-          >
-            {process.env.NODE_ENV === "development"
-              ? "拉流排队中（避免 dev 下多路长连接与热更新抢 chunk）…"
-              : "准备拉流…"}
+          <div className="media-placeholder">
+            {process.env.NODE_ENV === "development" ? "拉流排队中..." : "准备拉流..."}
           </div>
         )}
 
         {streamError ? (
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              zIndex: 3,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-              background: "rgba(0,0,0,0.75)",
-              color: "#f88",
-              fontSize: 13,
-              padding: 8,
-              textAlign: "center",
-            }}
-          >
-            <div>RTSP 拉流失败（检查网络、ffmpeg 是否在 PATH、服务端能否访问该 RTSP）</div>
+          <div className="media-error">
+            <p>RTSP 拉流失败</p>
+            <span>检查网络、ffmpeg 和 RTSP 可达性</span>
             <button
+              className="btn btn-secondary compact"
               type="button"
               onClick={() => {
                 setStreamReady(true);
@@ -208,11 +318,12 @@ function CameraStreamTile({
           </div>
         ) : null}
       </div>
-    </div>
+
+      {debug ? <div className="debug-line">{debug}</div> : null}
+    </article>
   );
 }
 
-/** 与 /detections 同一次采样缓存的 JPEG + 归一化框（不在监控流上画） */
 function DetectionPreviewTile({ cam, payload }: { cam: CameraDef; payload: DemoPayload | null }) {
   const frame = payload?.frames.find((f) => f.cameraId === cam.id);
   const isMock = payload?.clientSource === "mock";
@@ -224,72 +335,127 @@ function DetectionPreviewTile({ cam, payload }: { cam: CameraDef; payload: DemoP
   }, [bust, cam.id]);
 
   return (
-    <div
-      style={{
-        position: "relative",
-        border: "1px solid #555",
-        background: "#111",
-        overflow: "hidden",
-      }}
-    >
-      <div style={{ padding: "4px 6px", fontSize: 11, borderBottom: "1px solid #333", color: "#aaa" }}>
-        识别帧 · {cam.label}
+    <article className="media-card preview-card">
+      <div className="tile-head compact-head">
+        <h3>识别帧 · {cam.label}</h3>
+        <span className="badge badge-plain">{frame?.detections.length ?? 0} 框</span>
       </div>
-      <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 9", background: "#1a1a1a" }}>
+      <div className="video-frame">
         {isMock ? (
-          <div
-            style={{
-              width: "100%",
-              height: "100%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#666",
-              fontSize: 12,
-              padding: 8,
-              textAlign: "center",
-            }}
-          >
-            内置模拟无实拍识别帧
-          </div>
+          <div className="media-placeholder">内置模拟无实拍识别帧</div>
         ) : imgErr ? (
-          <div
-            style={{
-              width: "100%",
-              height: "100%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#a77",
-              fontSize: 12,
-              padding: 8,
-              textAlign: "center",
-            }}
-          >
-            无识别帧缓存（该路离线或识别后端尚未返回该路 JPEG）
-          </div>
+          <div className="media-placeholder warn">无识别帧缓存</div>
         ) : (
           <img
             src={`/api/detection-preview/${encodeURIComponent(cam.id)}?v=${bust}`}
             alt=""
             onError={() => setImgErr(true)}
-            style={{
-              position: "relative",
-              zIndex: 0,
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              display: "block",
-            }}
           />
         )}
         {!isMock && !imgErr && frame && frame.detections.length > 0 ? <DetectionOverlays frame={frame} /> : null}
       </div>
+    </article>
+  );
+}
+
+function StatCard({ label, value, tone = "default" }: { label: string; value: string | number; tone?: "default" | "primary" | "muted" }) {
+  return (
+    <div className={`stat-card ${tone}`}>
+      <p>{label}</p>
+      <strong>{value}</strong>
     </div>
   );
 }
 
+function useAuthUser() {
+  const [authLoading, setAuthLoading] = useState(true);
+  const [user, setUser] = useState<AuthUser | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/me", { cache: "no-store" })
+      .then(async (r) => {
+        if (!r.ok) return null;
+        return (await r.json()) as { user: AuthUser };
+      })
+      .then((body) => {
+        if (!cancelled) setUser(body?.user ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setUser(null);
+      })
+      .finally(() => {
+        if (!cancelled) setAuthLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const logout = useCallback(async () => {
+    await fetch("/api/auth/logout", { method: "POST", cache: "no-store" }).catch(() => {});
+    setUser(null);
+  }, []);
+
+  return { authLoading, user, setUser, logout };
+}
+
+export function SettingsPage() {
+  const { authLoading, user, setUser, logout } = useAuthUser();
+
+  const handleUserChanged = useCallback((nextUser: AuthUser) => {
+    setUser(nextUser);
+  }, [setUser]);
+
+  if (authLoading) {
+    return <main className="loading-shell">正在检查登录状态...</main>;
+  }
+
+  if (!user) {
+    return <LoginPanel onAuthed={handleUserChanged} />;
+  }
+
+  return (
+    <main className="app-shell noise-overlay">
+      <nav className="top-nav card">
+        <div className="top-brand">
+          <div className="brand-mark small">Gd</div>
+          <div>
+            <p className="eyebrow">GeoDance Re-ID</p>
+            <strong>Camera Admin</strong>
+          </div>
+        </div>
+        <div className="top-actions">
+          <Link className="btn btn-secondary compact" href="/">
+            主页
+          </Link>
+          <span className="badge badge-plain">{user.username}</span>
+          <button className="btn btn-secondary compact" type="button" onClick={() => void logout()}>
+            退出
+          </button>
+        </div>
+      </nav>
+
+      <header className="hero-card card settings-hero">
+        <div className="hero-copy">
+          <p className="eyebrow">Settings</p>
+          <h1>Camera Admin</h1>
+          <p>添加、删除当前用户的 RTSP 摄像头。这里的列表会同步用于首页实时预览、后端识别和采样帧缓存。</p>
+        </div>
+        <div className="hero-stats">
+          <StatCard label="当前用户" value={user.username} tone="muted" />
+          <StatCard label="摄像头" value={user.cameras.length} tone="primary" />
+        </div>
+      </header>
+
+      <CameraAdminPanel user={user} cameras={user.cameras} onUserChanged={handleUserChanged} />
+    </main>
+  );
+}
+
 export default function Dashboard() {
+  const { authLoading, user, setUser, logout } = useAuthUser();
+  const cameras = user?.cameras ?? [];
   const [data, setData] = useState<DemoPayload | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const pollMsRef = useRef(8000);
@@ -298,8 +464,30 @@ export default function Dashboard() {
   const [datasetAvailable, setDatasetAvailable] = useState(false);
   const [modeSwitching, setModeSwitching] = useState(false);
 
-  // Fetch current mode on mount
+  const statsTotal = useMemo(() => {
+    const rows = data?.stats?.cameras ?? [];
+    return {
+      raw: rows.reduce((a, c) => a + (c.yoloRawPersons ?? c.yoloPersons), 0),
+      output: rows.reduce((a, c) => a + c.outputBoxes, 0),
+      weak: rows.reduce((a, c) => a + (c.weakOutputBoxes ?? 0), 0),
+      failed: rows.reduce((a, c) => a + c.embedFailures, 0),
+    };
+  }, [data?.stats?.cameras]);
+
+  const handleUserChanged = useCallback((nextUser: AuthUser) => {
+    setUser(nextUser);
+    setData(null);
+    setErr(null);
+  }, [setUser]);
+
+  const handleLogout = useCallback(async () => {
+    await logout();
+    setData(null);
+    setErr(null);
+  }, [logout]);
+
   useEffect(() => {
+    if (!user) return;
     let cancelled = false;
     fetch("/api/mode", { cache: "no-store" })
       .then((r) => r.json())
@@ -309,8 +497,10 @@ export default function Dashboard() {
         setDatasetAvailable(info.datasetAvailable === true || info.datasetAvailable === "true");
       })
       .catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   const handleModeToggle = useCallback(async () => {
     const target = dataMode === "camera" ? "dataset" : "camera";
@@ -337,7 +527,7 @@ export default function Dashboard() {
   }, [dataMode]);
 
   const pull = useCallback(async () => {
-    if (pullInFlight.current) return;
+    if (!user || pullInFlight.current) return;
     pullInFlight.current = true;
     try {
       const r = await fetch("/api/detections", { cache: "no-store" });
@@ -351,11 +541,13 @@ export default function Dashboard() {
           typeof (j as { message: unknown }).message === "string"
             ? (j as { message: string }).message
             : `HTTP ${r.status}`;
+        if (r.status === 401) {
+          setUser(null);
+          throw new Error("登录已失效，请重新登录");
+        }
         throw new Error(msg);
       }
-      if (j === null || typeof j !== "object") {
-        throw new Error("invalid JSON");
-      }
+      if (j === null || typeof j !== "object") throw new Error("invalid JSON");
       const payload = j as DemoPayload;
       setData(payload);
       if (typeof payload.sampleIntervalMs === "number" && payload.sampleIntervalMs >= 2000) {
@@ -367,9 +559,10 @@ export default function Dashboard() {
     } finally {
       pullInFlight.current = false;
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
+    if (!user) return;
     let cancelled = false;
     async function loop() {
       while (!cancelled) {
@@ -382,115 +575,128 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [pull]);
+  }, [pull, user]);
 
-  const gridStyle = {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-    gap: 8,
-  } as const;
+  if (authLoading) {
+    return <main className="loading-shell">正在检查登录状态...</main>;
+  }
+
+  if (!user) {
+    return <LoginPanel onAuthed={handleUserChanged} />;
+  }
 
   return (
-    <main>
-      <header style={{ marginBottom: 12 }}>
-        <h1 style={{ margin: "0 0 8px", fontSize: 20 }}>多路摄像头 + 跨镜 Re-ID（Demo）</h1>
-        <p style={{ margin: 0, fontSize: 13, color: "#aaa", maxWidth: 960 }}>
-          上行：每路 <code>{`/api/rtsp/<cameraId>`}</code> 实时 MJPEG，不在画面上叠框。下行：与{" "}
-          <code>/api/detections</code> 同一次采样的静态 JPEG（<code>/api/detection-preview/&lt;id&gt;</code>
-          转发识别服务缓存帧）上绘制框与 ID。未设置 <code>REID_DETECTIONS_URL</code> 时为内置模拟（无实拍识别帧）。
-        </p>
-        <p style={{ margin: "6px 0 0", fontSize: 12, color: "#666" }}>
-          无摄像头时可设环境变量 <code>DISABLE_RTSP_PROXY=1</code> 关闭代理（接口 503）；本地调试勿部署到不支持长连接的
-          Serverless。若出现 <code>Cannot find module &apos;./xxx.js&apos;</code>：先停 dev，执行{" "}
-          <code>npm run dev:clean</code>，或多路稳定观看用 <code>npm run build && npm start</code>。
-        </p>
-        <div style={{ marginTop: 8, fontSize: 14 }}>
-          场馆内当前人数（本采样各路画面里检出、跨镜 Re-ID 去重）：
-          <strong style={{ color: "#8f8", marginLeft: 8 }}>{data?.visibleUniquePersonCount ?? "—"}</strong>
-          <span style={{ marginLeft: 16, color: "#aaa" }}>
-            Re-ID 画廊累计 id（历史上曾分配过的全局人数，含已离开画面）：
-            <strong style={{ color: "#aaf" }}>{data?.galleryUniquePersonCount ?? "—"}</strong>
-          </span>
-          {data ? (
-            <span style={{ color: "#666", marginLeft: 12 }}>
-              lastUpdate: {new Date(data.updatedAt).toLocaleTimeString()}
-            </span>
-          ) : null}
-          {data?.clientSource ? (
-            <span style={{ color: "#888", marginLeft: 10, fontSize: 12 }}>
-              数据源: {data.clientSource === "reid" ? "识别后端" : "内置模拟"}
-            </span>
-          ) : null}
+    <main className="app-shell noise-overlay">
+      <nav className="top-nav card">
+        <div className="top-brand">
+          <div className="brand-mark small">Gd</div>
+          <div>
+            <p className="eyebrow">GeoDance Re-ID</p>
+            <strong>跨镜摄像头控制台</strong>
+          </div>
         </div>
-        <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 13, color: "#aaa" }}>数据源:</span>
+        <div className="top-actions">
+          <Link className="btn btn-secondary compact" href="/settings">
+            Camera Admin
+          </Link>
           <button
+            className="btn btn-primary compact"
             type="button"
             disabled={modeSwitching}
             onClick={handleModeToggle}
-            style={{
-              padding: "6px 16px",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: modeSwitching ? "not-allowed" : "pointer",
-              background: dataMode === "camera" ? "#2563eb" : "#7c3aed",
-              color: "#fff",
-              border: "none",
-              borderRadius: 6,
-              opacity: modeSwitching ? 0.6 : 1,
-            }}
+            title={datasetAvailable ? "切换数据源" : "测试集未准备"}
           >
-            {modeSwitching ? "切换中..." : dataMode === "camera" ? "📷 摄像头" : "📊 测试集"}
+            {modeSwitching ? "切换中..." : dataMode === "camera" ? "Data Mode: 摄像头" : "Data Mode: 测试集"}
           </button>
-          {datasetAvailable ? (
-            <span style={{ fontSize: 11, color: "#6a9" }}>测试集就绪</span>
-          ) : (
-            <span style={{ fontSize: 11, color: "#c98" }}>
-              测试集未准备：运行 <code>python prepare_test_data.py</code>
-            </span>
-          )}
+          <span className="badge badge-plain">{user.username}</span>
+          <button className="btn btn-secondary compact" type="button" onClick={() => void handleLogout()}>
+            退出
+          </button>
         </div>
-        {err ? <p style={{ color: "#f66" }}>接口错误: {err}</p> : null}
-        {data?.stats?.cameras?.length ? (
-          <p style={{ margin: "6px 0 0", fontSize: 11, color: "#7a7", fontFamily: "ui-monospace, monospace" }}>
-            后端调试 stats：YOLO（IoU 去重前）{" "}
-            {data.stats.cameras.reduce((a, c) => a + (c.yoloRawPersons ?? c.yoloPersons), 0)}，去重后{" "}
-            {data.stats.cameras.reduce((a, c) => a + c.yoloPersons, 0)}
-            {data.stats.cameras.some((c) => c.passedConf !== undefined) ? (
-              <>
-                ，过置信度 {data.stats.cameras.reduce((a, c) => a + (c.passedConf ?? 0), 0)}，过最小边{" "}
-                {data.stats.cameras.reduce((a, c) => a + (c.passedMinSide ?? 0), 0)}，过形状{" "}
-                {data.stats.cameras.reduce((a, c) => a + (c.passedShape ?? 0), 0)}
-              </>
-            ) : null}
-            ，Re-ID 框 {data.stats.cameras.reduce((a, c) => a + c.outputBoxes, 0)}
-            {data.stats.cameras.some((c) => c.weakOutputBoxes !== undefined) ? (
-              <>
-                ，低置信展示框{" "}
-                {data.stats.cameras.reduce((a, c) => a + (c.weakOutputBoxes ?? 0), 0)}
-              </>
-            ) : null}
-            ，Re-ID 推理失败{" "}
-            {data.stats.cameras.reduce((a, c) => a + c.embedFailures, 0)}。若 YOLO 原始人数大于 0 而 Re-ID 框为 0：看每路过置信度/过形是否在某步归零，可调{" "}
-            <code>backend/reid_service/.env</code> 中 <code>YOLO_KEEP_MIN_CONF</code>、<code>PERSON_AR_*</code>、
-            <code>CROP_MIN_SIDE</code>，或临时 <code>PERSON_USE_SHAPE_FILTER=0</code> 排查。若全路 YOLO 原始=0：多为小人/暗光/花帧，可调低{" "}
-            <code>YOLO_CONF</code>、提高 <code>YOLO_IMGSZ</code> 与 <code>YOLO_MAX_SIDE</code>，或 <code>YOLO_MODEL=yolov8s.pt</code>。终端{" "}
-            <code>Could not find ref with POC</code> 多为 HEVC 参考帧丢失，与 stats 无关。
+      </nav>
+
+      <header className="hero-card card">
+        <div className="hero-copy">
+          <p className="eyebrow">Realtime Vision</p>
+          <h1>
+            多路摄像头 + <span>跨镜 Re-ID</span>
+          </h1>
+          <p>
+            实时 MJPEG 用于监看，后端按采样周期抓帧做 YOLO 与 Re-ID。当前用户的摄像头列表会独立参与拉流、识别和预览缓存。
           </p>
-        ) : data?.clientSource === "reid" ? (
-          <p style={{ margin: "6px 0 0", fontSize: 11, color: "#c98" }}>
-            未收到后端 <code>stats</code>（前端不显示每路调试行）。请确认识别进程已读{" "}
-            <code>backend/reid_service/.env</code> 且含 <code>DETECTIONS_STATS=1</code>（默认已开），并<strong>重启</strong>
-            <code> npm run reid:serve</code>；若仍无，检查 Python 返回 JSON 是否含 <code>stats.cameras</code> 数组。
-          </p>
-        ) : null}
+        </div>
+        <div className="hero-stats">
+          <StatCard label="当前人数" value={data?.visibleUniquePersonCount ?? "—"} tone="primary" />
+          <StatCard label="画廊累计" value={data?.galleryUniquePersonCount ?? "—"} />
+          <StatCard label="摄像头" value={cameras.length} tone="muted" />
+          <StatCard label="数据源" value={data?.clientSource === "reid" ? "识别后端" : data?.clientSource === "mock" ? "模拟" : "—"} />
+        </div>
       </header>
 
+      {err ? <div className="alert alert-error">{err}</div> : null}
+
+      {data?.stats?.cameras?.length ? (
+        <section className="card stats-card">
+          <div className="section-head inline-head">
+            <div>
+              <p className="eyebrow">Backend Stats</p>
+              <h2>后端识别状态</h2>
+            </div>
+            <span className="badge badge-plain">{data ? new Date(data.updatedAt).toLocaleTimeString() : "等待数据"}</span>
+          </div>
+          <div className="stats-grid">
+              <StatCard label="YOLO 原始" value={statsTotal.raw} />
+              <StatCard label="Re-ID 框" value={statsTotal.output} tone="primary" />
+              <StatCard label="低置信框" value={statsTotal.weak} />
+              <StatCard label="推理失败" value={statsTotal.failed} tone="muted" />
+            </div>
+          <p className="muted tiny">
+            如果 YOLO 原始人数大于 0 而 Re-ID 框为 0，可调 `YOLO_KEEP_MIN_CONF`、`PERSON_AR_*`、`CROP_MIN_SIDE` 或临时关闭形状过滤排查。
+          </p>
+        </section>
+      ) : data?.clientSource === "reid" ? (
+        <div className="alert alert-warning">
+          未收到后端 stats。确认 `backend/reid_service/.env` 中 `DETECTIONS_STATS=1`，并重启 `npm run reid:serve`。
+        </div>
+      ) : null}
+
+      <section className="panel-section top-section">
+        <div className="section-head">
+          <div>
+            <p className="eyebrow">Detection Preview</p>
+            <h2>本采样识别帧</h2>
+          </div>
+          <span className="badge badge-plain">框与 ID 仅画在采样帧上</span>
+        </div>
+        <div className="media-grid">
+          {dataMode === "dataset" && data
+            ? data.frames
+                .filter((f) => f.online)
+                .map((f) => {
+                  const cam: CameraDef = {
+                    id: f.cameraId,
+                    label: f.cameraId.replace("cam_", "虚拟摄像头 "),
+                    rtspPath: "",
+                    tier: "normal",
+                  };
+                  return <DetectionPreviewTile key={`det-${f.cameraId}`} cam={cam} payload={data} />;
+                })
+            : cameras.map((cam) => <DetectionPreviewTile key={`det-${cam.id}`} cam={cam} payload={data} />)}
+          {dataMode !== "dataset" && cameras.length === 0 ? <div className="empty-line">没有可显示的识别帧。</div> : null}
+        </div>
+      </section>
+
       {dataMode === "camera" ? (
-        <>
-          <h2 style={{ margin: "0 0 8px", fontSize: 15, color: "#ccc" }}>实时预览（无检测框）</h2>
-          <section style={{ ...gridStyle, marginBottom: 16 }}>
-            {CAMERAS.map((cam, i) => (
+        <section className="panel-section">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">Live Streams</p>
+              <h2>实时预览</h2>
+            </div>
+            <span className="badge badge-plain">无检测框</span>
+          </div>
+          <div className="media-grid">
+            {cameras.map((cam, i) => (
               <CameraStreamTile
                 key={cam.id}
                 cam={cam}
@@ -498,36 +704,12 @@ export default function Dashboard() {
                 debugStat={data?.stats?.cameras?.find((s) => s.cameraId === cam.id)}
               />
             ))}
-          </section>
-        </>
+            {cameras.length === 0 ? <div className="empty-line">先到 Camera Admin 添加 RTSP 地址。</div> : null}
+          </div>
+        </section>
       ) : (
-        <p style={{ margin: "12px 0", fontSize: 13, color: "#888" }}>
-          测试集模式：下方显示测试图像及 Re-ID 结果。实时 RTSP 流已隐藏。
-        </p>
+        <div className="alert alert-info">测试集模式：实时 RTSP 流已隐藏，下方只显示测试图像及 Re-ID 结果。</div>
       )}
-
-      <h2 style={{ margin: "0 0 8px", fontSize: 15, color: "#ccc" }}>
-        本采样识别帧（框与 ID 仅画在此行，与上行实时流时刻可能不一致）
-      </h2>
-      <section style={gridStyle}>
-        {dataMode === "dataset" && data
-          ? data.frames
-              .filter((f) => f.online)
-              .map((f) => {
-                const cam: CameraDef = {
-                  id: f.cameraId,
-                  label: f.cameraId.replace("cam_", "虚拟摄像头 "),
-                  rtspPath: "",
-                  tier: "normal",
-                };
-                return (
-                  <DetectionPreviewTile key={`det-${f.cameraId}`} cam={cam} payload={data} />
-                );
-              })
-          : CAMERAS.map((cam) => (
-              <DetectionPreviewTile key={`det-${cam.id}`} cam={cam} payload={data} />
-            ))}
-      </section>
     </main>
   );
 }

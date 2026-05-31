@@ -1,8 +1,9 @@
 import { spawn } from "child_process";
 import type { NextRequest } from "next/server";
-import { getCameraById } from "@/lib/cameras";
+import { isAuthResponse, requireUser } from "@/lib/apiAuth";
 import { buildRtspToMjpegArgs } from "@/lib/rtspFfmpeg";
 import { rtspDescribeStatusCode } from "@/lib/rtspDescribe";
+import { findUserCamera } from "@/lib/userCameraRouting";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,12 +12,15 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
 
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const user = requireUser(request);
+  if (isAuthResponse(user)) return user;
+
   if (process.env.DISABLE_RTSP_PROXY === "1") {
     return new Response("RTSP proxy disabled (DISABLE_RTSP_PROXY=1)", { status: 503 });
   }
 
   const { id } = await ctx.params;
-  const cam = getCameraById(id);
+  const cam = findUserCamera(user, id);
   if (!cam) {
     return new Response("Unknown camera id", { status: 404 });
   }

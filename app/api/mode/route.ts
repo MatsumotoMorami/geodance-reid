@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
+import { isAuthResponse, requireUser } from "@/lib/apiAuth";
 import { fetchReidMode, setReidMode } from "@/lib/reidBackend";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
+  const user = requireUser(req);
+  if (isAuthResponse(user)) return user;
+
   try {
     const info = await fetchReidMode();
     return NextResponse.json(info);
@@ -16,6 +21,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const user = requireUser(req);
+  if (isAuthResponse(user)) return user;
+
   try {
     const body = await req.json().catch(() => ({}));
     const mode = body.mode;
