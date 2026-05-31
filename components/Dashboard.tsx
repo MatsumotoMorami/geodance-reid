@@ -12,10 +12,10 @@ export type AuthUser = {
   camerasUpdatedAt: number;
 };
 
-const CAMERA_TIERS: Array<{ value: CameraTier; label: string; hint: string }> = [
-  { value: "normal", label: "普通", hint: "标准拉流" },
-  { value: "low_availability", label: "低可用", hint: "更长超时" },
-  { value: "low_resolution", label: "低清", hint: "低清优化" },
+const CAMERA_TIERS: Array<{ value: CameraTier; label: string }> = [
+  { value: "normal", label: "普通" },
+  { value: "low_availability", label: "低可用" },
+  { value: "low_resolution", label: "低清" },
 ];
 
 function tierLabel(tier: CameraTier): string {
@@ -92,7 +92,7 @@ function LoginPanel({ onAuthed }: { onAuthed: (user: AuthUser) => void }) {
         cache: "no-store",
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error((j as { message?: string }).message || `HTTP ${r.status}`);
+      if (!r.ok) throw new Error("登录失败");
       onAuthed((j as { user: AuthUser }).user);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -118,7 +118,6 @@ function LoginPanel({ onAuthed }: { onAuthed: (user: AuthUser) => void }) {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               autoComplete="username"
-              placeholder="admin"
             />
           </label>
           <label>
@@ -129,7 +128,6 @@ function LoginPanel({ onAuthed }: { onAuthed: (user: AuthUser) => void }) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
-              placeholder="至少 8 位"
               onKeyDown={(e) => {
                 if (e.key === "Enter") void submit();
               }}
@@ -179,8 +177,8 @@ function CameraAdminPanel({
       setLabel("");
       setRtspPath("");
       setTier("normal");
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+    } catch {
+      setErr("添加失败");
     } finally {
       setBusy(false);
     }
@@ -197,8 +195,8 @@ function CameraAdminPanel({
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error((j as { message?: string }).message || `HTTP ${r.status}`);
       onUserChanged((j as { user: AuthUser }).user);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+    } catch {
+      setErr("删除失败");
     } finally {
       setBusy(false);
     }
@@ -215,12 +213,12 @@ function CameraAdminPanel({
       </div>
 
       <div className="camera-form">
-        <input className="input" placeholder="ID，如 room" value={id} onChange={(e) => setId(e.target.value)} />
+        <input className="input" placeholder="ID" value={id} onChange={(e) => setId(e.target.value)} />
         <input className="input" placeholder="名称" value={label} onChange={(e) => setLabel(e.target.value)} />
-        <input className="input input-wide" placeholder="rtsp://..." value={rtspPath} onChange={(e) => setRtspPath(e.target.value)} />
+        <input className="input input-wide" placeholder="RTSP" value={rtspPath} onChange={(e) => setRtspPath(e.target.value)} />
         <select className="input" value={tier} onChange={(e) => setTier(e.target.value as CameraTier)}>
           {CAMERA_TIERS.map((t) => (
-            <option key={t.value} value={t.value}>{t.label} · {t.hint}</option>
+            <option key={t.value} value={t.value}>{t.label}</option>
           ))}
         </select>
         <button className="btn btn-primary" type="button" disabled={busy} onClick={() => void addCamera()}>
@@ -243,7 +241,6 @@ function CameraAdminPanel({
             </button>
           </div>
         ))}
-        {cameras.length === 0 ? <div className="empty-line">当前用户还没有摄像头。</div> : null}
       </div>
     </section>
   );
@@ -297,14 +294,13 @@ function CameraStreamTile({
           />
         ) : (
           <div className="media-placeholder">
-            {process.env.NODE_ENV === "development" ? "拉流排队中..." : "准备拉流..."}
+            Loading
           </div>
         )}
 
         {streamError ? (
           <div className="media-error">
-            <p>RTSP 拉流失败</p>
-            <span>检查网络、ffmpeg 和 RTSP 可达性</span>
+            <p>RTSP</p>
             <button
               className="btn btn-secondary compact"
               type="button"
@@ -342,9 +338,9 @@ function DetectionPreviewTile({ cam, payload }: { cam: CameraDef; payload: DemoP
       </div>
       <div className="video-frame">
         {isMock ? (
-          <div className="media-placeholder">内置模拟无实拍识别帧</div>
+          <div className="media-placeholder">N/A</div>
         ) : imgErr ? (
-          <div className="media-placeholder warn">无识别帧缓存</div>
+          <div className="media-placeholder warn">N/A</div>
         ) : (
           <img
             src={`/api/detection-preview/${encodeURIComponent(cam.id)}?v=${bust}`}
@@ -408,7 +404,7 @@ export function SettingsPage() {
   }, [setUser]);
 
   if (authLoading) {
-    return <main className="loading-shell">正在检查登录状态...</main>;
+    return <main className="loading-shell">Loading</main>;
   }
 
   if (!user) {
@@ -440,7 +436,6 @@ export function SettingsPage() {
         <div className="hero-copy">
           <p className="eyebrow">Settings</p>
           <h1>Camera Admin</h1>
-          <p>添加、删除当前用户的 RTSP 摄像头。这里的列表会同步用于首页实时预览、后端识别和采样帧缓存。</p>
         </div>
         <div className="hero-stats">
           <StatCard label="当前用户" value={user.username} tone="muted" />
@@ -461,7 +456,6 @@ export default function Dashboard() {
   const pollMsRef = useRef(8000);
   const pullInFlight = useRef(false);
   const [dataMode, setDataMode] = useState<"camera" | "dataset">("camera");
-  const [datasetAvailable, setDatasetAvailable] = useState(false);
   const [modeSwitching, setModeSwitching] = useState(false);
 
   const statsTotal = useMemo(() => {
@@ -494,7 +488,6 @@ export default function Dashboard() {
       .then((info) => {
         if (cancelled) return;
         setDataMode(info.mode === "dataset" ? "dataset" : "camera");
-        setDatasetAvailable(info.datasetAvailable === true || info.datasetAvailable === "true");
       })
       .catch(() => {});
     return () => {
@@ -519,8 +512,8 @@ export default function Dashboard() {
       setDataMode(target);
       setData(null);
       setErr(null);
-    } catch (e) {
-      setErr(`模式切换失败: ${e instanceof Error ? e.message : String(e)}`);
+    } catch {
+      setErr("切换失败");
     } finally {
       setModeSwitching(false);
     }
@@ -533,19 +526,11 @@ export default function Dashboard() {
       const r = await fetch("/api/detections", { cache: "no-store" });
       const j: unknown = await r.json().catch(() => null);
       if (!r.ok) {
-        const msg =
-          j &&
-          typeof j === "object" &&
-          j !== null &&
-          "message" in j &&
-          typeof (j as { message: unknown }).message === "string"
-            ? (j as { message: string }).message
-            : `HTTP ${r.status}`;
         if (r.status === 401) {
           setUser(null);
-          throw new Error("登录已失效，请重新登录");
+          throw new Error("登录失效");
         }
-        throw new Error(msg);
+        throw new Error(`HTTP ${r.status}`);
       }
       if (j === null || typeof j !== "object") throw new Error("invalid JSON");
       const payload = j as DemoPayload;
@@ -554,8 +539,8 @@ export default function Dashboard() {
         pollMsRef.current = Math.min(60_000, Math.max(3000, payload.sampleIntervalMs + 2000));
       }
       setErr(null);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "fetch failed");
+    } catch {
+      setErr("获取失败");
     } finally {
       pullInFlight.current = false;
     }
@@ -578,7 +563,7 @@ export default function Dashboard() {
   }, [pull, user]);
 
   if (authLoading) {
-    return <main className="loading-shell">正在检查登录状态...</main>;
+    return <main className="loading-shell">Loading</main>;
   }
 
   if (!user) {
@@ -604,9 +589,8 @@ export default function Dashboard() {
             type="button"
             disabled={modeSwitching}
             onClick={handleModeToggle}
-            title={datasetAvailable ? "切换数据源" : "测试集未准备"}
           >
-            {modeSwitching ? "切换中..." : dataMode === "camera" ? "Data Mode: 摄像头" : "Data Mode: 测试集"}
+            {modeSwitching ? "..." : dataMode === "camera" ? "摄像头" : "测试集"}
           </button>
           <span className="badge badge-plain">{user.username}</span>
           <button className="btn btn-secondary compact" type="button" onClick={() => void handleLogout()}>
@@ -621,9 +605,6 @@ export default function Dashboard() {
           <h1>
             多路摄像头 + <span>跨镜 Re-ID</span>
           </h1>
-          <p>
-            实时 MJPEG 用于监看，后端按采样周期抓帧做 YOLO 与 Re-ID。当前用户的摄像头列表会独立参与拉流、识别和预览缓存。
-          </p>
         </div>
         <div className="hero-stats">
           <StatCard label="当前人数" value={data?.visibleUniquePersonCount ?? "—"} tone="primary" />
@@ -642,22 +623,15 @@ export default function Dashboard() {
               <p className="eyebrow">Backend Stats</p>
               <h2>后端识别状态</h2>
             </div>
-            <span className="badge badge-plain">{data ? new Date(data.updatedAt).toLocaleTimeString() : "等待数据"}</span>
+            <span className="badge badge-plain">{data ? new Date(data.updatedAt).toLocaleTimeString() : "—"}</span>
           </div>
           <div className="stats-grid">
-              <StatCard label="YOLO 原始" value={statsTotal.raw} />
-              <StatCard label="Re-ID 框" value={statsTotal.output} tone="primary" />
-              <StatCard label="低置信框" value={statsTotal.weak} />
-              <StatCard label="推理失败" value={statsTotal.failed} tone="muted" />
-            </div>
-          <p className="muted tiny">
-            如果 YOLO 原始人数大于 0 而 Re-ID 框为 0，可调 `YOLO_KEEP_MIN_CONF`、`PERSON_AR_*`、`CROP_MIN_SIDE` 或临时关闭形状过滤排查。
-          </p>
+            <StatCard label="YOLO 原始" value={statsTotal.raw} />
+            <StatCard label="Re-ID 框" value={statsTotal.output} tone="primary" />
+            <StatCard label="低置信框" value={statsTotal.weak} />
+            <StatCard label="推理失败" value={statsTotal.failed} tone="muted" />
+          </div>
         </section>
-      ) : data?.clientSource === "reid" ? (
-        <div className="alert alert-warning">
-          未收到后端 stats。确认 `backend/reid_service/.env` 中 `DETECTIONS_STATS=1`，并重启 `npm run reid:serve`。
-        </div>
       ) : null}
 
       <section className="panel-section top-section">
@@ -666,7 +640,6 @@ export default function Dashboard() {
             <p className="eyebrow">Detection Preview</p>
             <h2>本采样识别帧</h2>
           </div>
-          <span className="badge badge-plain">框与 ID 仅画在采样帧上</span>
         </div>
         <div className="media-grid">
           {dataMode === "dataset" && data
@@ -682,7 +655,6 @@ export default function Dashboard() {
                   return <DetectionPreviewTile key={`det-${f.cameraId}`} cam={cam} payload={data} />;
                 })
             : cameras.map((cam) => <DetectionPreviewTile key={`det-${cam.id}`} cam={cam} payload={data} />)}
-          {dataMode !== "dataset" && cameras.length === 0 ? <div className="empty-line">没有可显示的识别帧。</div> : null}
         </div>
       </section>
 
@@ -693,7 +665,6 @@ export default function Dashboard() {
               <p className="eyebrow">Live Streams</p>
               <h2>实时预览</h2>
             </div>
-            <span className="badge badge-plain">无检测框</span>
           </div>
           <div className="media-grid">
             {cameras.map((cam, i) => (
@@ -704,12 +675,9 @@ export default function Dashboard() {
                 debugStat={data?.stats?.cameras?.find((s) => s.cameraId === cam.id)}
               />
             ))}
-            {cameras.length === 0 ? <div className="empty-line">先到 Camera Admin 添加 RTSP 地址。</div> : null}
           </div>
         </section>
-      ) : (
-        <div className="alert alert-info">测试集模式：实时 RTSP 流已隐藏，下方只显示测试图像及 Re-ID 结果。</div>
-      )}
+      ) : null}
     </main>
   );
 }

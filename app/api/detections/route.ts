@@ -27,12 +27,8 @@ export async function GET(req: Request) {
         console.log("[api/detections]", { boxes: n, visible: body.visibleUniquePersonCount, hasStats: !!body.stats });
       }
       return NextResponse.json({ ...body, clientSource: "reid" as const });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return NextResponse.json(
-        { error: "REID_BACKEND_FAILED", message: msg },
-        { status: 502 },
-      );
+    } catch {
+      return NextResponse.json({ error: "REID_BACKEND_FAILED" }, { status: 502 });
     }
   }
 

@@ -18,11 +18,7 @@ export async function POST(req: Request) {
     const body = await req.json();
     const updated = addCameraForUser(user.id, body);
     return NextResponse.json({ user: updated, cameras: updated.cameras }, { status: 201 });
-  } catch (e) {
-    return NextResponse.json(
-      { error: "CAMERA_ADD_FAILED", message: e instanceof Error ? e.message : String(e) },
-      { status: 400 },
-    );
+  } catch {
+    return NextResponse.json({ error: "CAMERA_ADD_FAILED" }, { status: 400 });
   }
 }
-

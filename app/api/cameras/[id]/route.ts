@@ -11,17 +11,13 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
 
   const { id } = await ctx.params;
   if (!id || id.includes("/") || id.includes("..")) {
-    return NextResponse.json({ error: "INVALID_ID", message: "摄像头 ID 无效" }, { status: 400 });
+    return NextResponse.json({ error: "INVALID_ID" }, { status: 400 });
   }
 
   try {
     const updated = deleteCameraForUser(user.id, id);
     return NextResponse.json({ user: updated, cameras: updated.cameras });
-  } catch (e) {
-    return NextResponse.json(
-      { error: "CAMERA_DELETE_FAILED", message: e instanceof Error ? e.message : String(e) },
-      { status: 404 },
-    );
+  } catch {
+    return NextResponse.json({ error: "CAMERA_DELETE_FAILED" }, { status: 404 });
   }
 }
-

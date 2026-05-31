@@ -28,10 +28,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const upstreamId = userCamera ? backendCameraIdForUser(user, id) : id;
   const upstream = getReidPreviewUpstreamUrl(id, upstreamId);
   if (!upstream) {
-    return NextResponse.json(
-      { error: "NO_REID_BACKEND", message: "未设置 REID_DETECTIONS_URL（模拟模式无识别帧）" },
-      { status: 404 },
-    );
+    return NextResponse.json({ error: "NO_REID_BACKEND" }, { status: 404 });
   }
   const ms = previewFetchTimeoutMs();
   const ctrl = new AbortController();

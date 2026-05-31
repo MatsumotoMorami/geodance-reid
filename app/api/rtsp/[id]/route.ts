@@ -16,19 +16,19 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
   if (isAuthResponse(user)) return user;
 
   if (process.env.DISABLE_RTSP_PROXY === "1") {
-    return new Response("RTSP proxy disabled (DISABLE_RTSP_PROXY=1)", { status: 503 });
+    return new Response("DISABLED", { status: 503 });
   }
 
   const { id } = await ctx.params;
   const cam = findUserCamera(user, id);
   if (!cam) {
-    return new Response("Unknown camera id", { status: 404 });
+    return new Response("NOT_FOUND", { status: 404 });
   }
 
   const describeMs = Number.parseInt(process.env.RTSP_DESCRIBE_TIMEOUT_MS || "2500", 10);
   const describeCode = await rtspDescribeStatusCode(cam.rtspPath, describeMs);
   if (describeCode === 404) {
-    return new Response("RTSP DESCRIBE 404（该路流不存在或路径错误）", { status: 404 });
+    return new Response("NOT_FOUND", { status: 404 });
   }
 
   const args = buildRtspToMjpegArgs(cam);
@@ -38,7 +38,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
   });
 
   if (!ff.stdout) {
-    return new Response("Failed to start ffmpeg (no stdout)", { status: 500 });
+    return new Response("ERROR", { status: 500 });
   }
 
   ff.stderr?.on("data", () => {});
