@@ -395,8 +395,7 @@ a.btn {
   grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
 }
 
-.hero-stats,
-.stats-grid {
+.hero-stats {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
@@ -447,14 +446,9 @@ a.btn {
   background: var(--info-soft);
 }
 
-.stats-card,
 .control-card {
   margin-top: 18px;
   padding: 20px;
-}
-
-.stats-card > .muted {
-  margin-top: 12px;
 }
 
 .section-head {
@@ -684,13 +678,11 @@ a.btn {
 
   .auth-card,
   .hero-card,
-  .stats-card,
   .control-card {
     padding: 18px;
   }
 
   .hero-stats,
-  .stats-grid,
   .media-grid {
     grid-template-columns: 1fr;
   }

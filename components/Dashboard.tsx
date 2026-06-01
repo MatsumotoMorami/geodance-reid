@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { CameraFrame, DemoPayload, DetectionsDebugCamera } from "@/lib/types";
 import type { CameraDef, CameraTier } from "@/lib/cameras";
@@ -468,16 +468,6 @@ export default function Dashboard() {
   const [dataMode, setDataMode] = useState<"camera" | "dataset">("camera");
   const [modeSwitching, setModeSwitching] = useState(false);
 
-  const statsTotal = useMemo(() => {
-    const rows = data?.stats?.cameras ?? [];
-    return {
-      raw: rows.reduce((a, c) => a + (c.yoloRawPersons ?? c.yoloPersons), 0),
-      output: rows.reduce((a, c) => a + c.outputBoxes, 0),
-      weak: rows.reduce((a, c) => a + (c.weakOutputBoxes ?? 0), 0),
-      failed: rows.reduce((a, c) => a + c.embedFailures, 0),
-    };
-  }, [data?.stats?.cameras]);
-
   const handleUserChanged = useCallback((nextUser: AuthUser) => {
     setUser(nextUser);
     setData(null);
@@ -625,24 +615,6 @@ export default function Dashboard() {
       </header>
 
       {err ? <div className="alert alert-error">{err}</div> : null}
-
-      {data?.stats?.cameras?.length ? (
-        <section className="card stats-card">
-          <div className="section-head inline-head">
-            <div>
-              <p className="eyebrow">Backend Stats</p>
-              <h2>后端识别状态</h2>
-            </div>
-            <span className="badge badge-plain">{data ? new Date(data.updatedAt).toLocaleTimeString() : "—"}</span>
-          </div>
-          <div className="stats-grid">
-            <StatCard label="YOLO 原始" value={statsTotal.raw} />
-            <StatCard label="Re-ID 框" value={statsTotal.output} tone="primary" />
-            <StatCard label="低置信框" value={statsTotal.weak} />
-            <StatCard label="推理失败" value={statsTotal.failed} tone="muted" />
-          </div>
-        </section>
-      ) : null}
 
       <section className="panel-section top-section">
         <div className="section-head">
