@@ -156,15 +156,9 @@ jobs:
             mkdir -p backend/reid_service/test_data
 
             has_data=0
-            for cam_dir in backend/reid_service/test_data/cam_*; do
-              if [ ! -d \"$cam_dir\" ]; then
-                continue
-              fi
-              if find \"$cam_dir\" -maxdepth 1 -type f \\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' \\) | grep -q .; then
-                has_data=1
-                break
-              fi
-            done
+            if find backend/reid_service/test_data -maxdepth 3 -type f \\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' \\) -print -quit | grep -q .; then
+              has_data=1
+            fi
 
             if [ \"$has_data\" -eq 1 ]; then
               echo '[deploy] Existing test data found, skip initialization.'
