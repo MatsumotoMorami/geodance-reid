@@ -130,6 +130,63 @@ http://localhost:3000
 
 前端会通过 `/api/rtsp/<cameraId>` 实时转码 RTSP 画面，通过 `/api/detections` 轮询后端识别结果，并在画面上叠加人框和全局 ID。
 
+## Docker Compose 部署
+
+服务器已安装 Docker 和 Docker Compose 后，clone 仓库即可用 Compose 启动：
+
+```bash
+cp .env.example .env
+# 编辑 .env，至少填 AUTH_ADMIN_USERNAME 和 AUTH_ADMIN_PASSWORD
+docker compose up -d --build
+```
+
+默认端口：
+
+- Web：`http://服务器IP:3000`
+- Re-ID 后端：`http://服务器IP:8890/health`
+
+Compose 会启动两个服务：
+
+- `web`：Next.js 生产服务，内置 ffmpeg，用于 RTSP 实时 MJPEG 转发和前端页面。
+- `reid`：Python FastAPI + YOLO + torchreid/OSNet 后端，默认 CPU 推理，首次构建会下载 Python 依赖、OSNet 权重和 YOLO 权重。
+
+管理员账号由根目录 `.env` 提供：
+
+```bash
+AUTH_ADMIN_USERNAME=admin
+AUTH_ADMIN_PASSWORD=至少8位密码
+```
+
+用户数据保存在 Docker volume `web_data` 中的 `/app/data/app-store.json`。如果 volume 里已经有用户，后续修改 `.env` 中的管理员账号密码不会覆盖已有用户；需要重置时删除对应 volume 或迁移数据。
+
+## GitHub Actions 部署
+
+仓库包含 `.github/workflows/deploy.yml`。推送到 `main` 或手动运行 workflow 时，Actions 会：
+
+1. checkout 当前仓库；
+2. 通过 SSH 把代码包同步到服务器的 `~/geodance-reid`；
+3. 用 repo secrets 生成服务器上的 `.env`；
+4. 在服务器执行 `docker compose up -d --build --remove-orphans`。
+
+需要在 GitHub repo secrets 配置：
+
+```text
+SSH_HOST
+SSH_KEY
+SSH_USER
+SSH_PORT
+AUTH_ADMIN_USERNAME
+AUTH_ADMIN_PASSWORD
+```
+
+可选 repo variables：
+
+```text
+DEPLOY_DIR=geodance-reid
+APP_PORT=3000
+REID_PORT=8890
+```
+
 ## 登录与用户数据
 
 项目没有开放注册。部署前在项目根目录 `.env.local` 中添加管理员登录信息：
@@ -184,6 +241,23 @@ python prepare_test_data.py
 ```
 
 然后启动后端和前端，点击首页导航栏的 `Data Mode` 按钮切换到测试集模式。后端会读取 `backend/reid_service/test_data/cam_*` 作为虚拟摄像头。
+
+如果本地已有 Market-1501，可以生成独立的跨摄像头 Re-ID 测试集，不覆盖默认 `test_data`：
+
+```bash
+python backend/reid_service/prepare_market1501_test_data.py /Users/test/Downloads/Market-1501-v15.09.15
+TEST_DATA_DIR=test_data_market1501 \
+YOLO_MAX_PER_FRAME=1 \
+REID_PER_CAMERA_TRACK=0 \
+REID_GLOBAL_MATCH_ORDER=1 \
+REID_USE_POSE=0 \
+REID_MATCH_THRESHOLD=0.60 \
+npm run reid:serve
+```
+
+Market-1501 是低清裁剪人像数据，不是完整 1080p 监控画面。脚本默认会从出现在 6 个摄像头中的身份里挑一组外观较分散的样本，把每张人像放到 1920x1080 画布中，并按 `c1` 到 `c6` 分成 `cam_1` 到 `cam_6`，让同一次轮询尽量读到同一个 person id 的不同摄像头视角。这个模式适合 smoke test 跨镜 ID 合并，但不能替代 WILDTRACK、SCOUT 这类真实多摄像头全画面数据集。
+
+因为 Market-1501 每轮会在同一路虚拟摄像头中切换到另一个人，测试时要关闭每路视频轨迹跟踪，即 `REID_PER_CAMERA_TRACK=0`；否则相邻两张同位置裁剪图可能被当成同一条视频轨迹。
 
 ## 摄像头配置
 

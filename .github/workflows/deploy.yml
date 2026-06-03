@@ -1,0 +1,142 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_DIR: ${{ vars.DEPLOY_DIR || 'geodance-reid' }}
+      APP_PORT: ${{ vars.APP_PORT || '3000' }}
+      REID_PORT: ${{ vars.REID_PORT || '8890' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> "$HOME/.ssh/known_hosts"
+
+      - name: Create deploy archive
+        run: |
+          set -euo pipefail
+          tar -czf "$RUNNER_TEMP/geodance-reid.tar.gz" \
+            --exclude='./.git' \
+            --exclude='./.github' \
+            --exclude='./.next' \
+            --exclude='./node_modules' \
+            --exclude='./data' \
+            --exclude='./.env' \
+            --exclude='./.env.*' \
+            --exclude='./backend/reid_service/.env' \
+            --exclude='./backend/reid_service/weights' \
+            --exclude='./backend/reid_service/checkpoints' \
+            --exclude='./backend/reid_service/runs' \
+            --exclude='./backend/reid_service/test_data/cam_*' \
+            --exclude='./backend/reid_service/test_data/_*' \
+            --exclude='./backend/reid_service/test_data/*.zip' \
+            --exclude='./backend/reid_service/test_data_market1501' \
+            --exclude='./backend/reid_service/test_data_1080p' \
+            --exclude='*.pt' \
+            --exclude='*.pth' \
+            --exclude='*.pth.tar' \
+            --exclude='*.onnx' \
+            --exclude='*.engine' \
+            --exclude='*.weights' \
+            --exclude='*.safetensors' \
+            .
+
+      - name: Write production env
+        env:
+          AUTH_ADMIN_USERNAME: ${{ secrets.AUTH_ADMIN_USERNAME }}
+          AUTH_ADMIN_PASSWORD: ${{ secrets.AUTH_ADMIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          def encode_dotenv_value(value: str) -> str:
+              if "\n" in value or "\r" in value:
+                  raise SystemExit("dotenv values must be single-line")
+              special = set(' \t"\'#$`\\')
+              if value and not any(ch in special for ch in value):
+                  return value
+              escaped = (
+                  value
+                  .replace("\\", "\\\\")
+                  .replace('"', '\\"')
+                  .replace("$", "\\$")
+                  .replace("`", "\\`")
+              )
+              return f'"{escaped}"'
+
+          values = {
+              "AUTH_ADMIN_USERNAME": os.environ["AUTH_ADMIN_USERNAME"],
+              "AUTH_ADMIN_PASSWORD": os.environ["AUTH_ADMIN_PASSWORD"],
+              "APP_PORT": os.environ["APP_PORT"],
+              "REID_PORT": os.environ["REID_PORT"],
+              "REID_BACKEND_FETCH_MS": "180000",
+          }
+          Path(".deploy.env").write_text(
+              "".join(f"{k}={encode_dotenv_value(v)}\n" for k, v in values.items()),
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload release
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -euo pipefail
+          REMOTE="${SSH_USER}@${SSH_HOST}"
+          ARCHIVE="/tmp/geodance-reid-${GITHUB_SHA}.tar.gz"
+          ssh -i "$HOME/.ssh/deploy_key" -p "$SSH_PORT" "$REMOTE" "mkdir -p '$DEPLOY_DIR'"
+          scp -i "$HOME/.ssh/deploy_key" -P "$SSH_PORT" "$RUNNER_TEMP/geodance-reid.tar.gz" "$REMOTE:$ARCHIVE"
+          scp -i "$HOME/.ssh/deploy_key" -P "$SSH_PORT" .deploy.env "$REMOTE:$DEPLOY_DIR/.env"
+          ssh -i "$HOME/.ssh/deploy_key" -p "$SSH_PORT" "$REMOTE" "set -eu
+            find '$DEPLOY_DIR' -mindepth 1 -maxdepth 1 ! -name '.env' ! -name 'data' -exec rm -rf {} +
+            tar -xzf '$ARCHIVE' -C '$DEPLOY_DIR'
+            rm -f '$ARCHIVE'
+          "
+
+      - name: Rebuild and restart
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -euo pipefail
+          REMOTE="${SSH_USER}@${SSH_HOST}"
+          ssh -i "$HOME/.ssh/deploy_key" -p "$SSH_PORT" "$REMOTE" "set -eu
+            cd '$DEPLOY_DIR'
+            if docker compose version >/dev/null 2>&1; then
+              docker compose up -d --build --remove-orphans
+              docker compose ps
+            elif command -v docker-compose >/dev/null 2>&1; then
+              docker-compose up -d --build --remove-orphans
+              docker-compose ps
+            else
+              echo 'Docker Compose is not installed on the server.' >&2
+              exit 1
+            fi
+          "

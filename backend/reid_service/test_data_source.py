@@ -24,7 +24,17 @@ from typing import Any
 import cv2
 import numpy as np
 
-TEST_DATA_DIR = Path(__file__).resolve().parent / "test_data"
+DEFAULT_TEST_DATA_DIR = Path(__file__).resolve().parent / "test_data"
+
+
+def _test_data_dir() -> Path:
+    raw = os.environ.get("TEST_DATA_DIR", "").strip()
+    if not raw:
+        return DEFAULT_TEST_DATA_DIR
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        p = Path(__file__).resolve().parent / p
+    return p
 
 # Per-camera index for rotating through images
 _state: dict[str, int] = {}
@@ -32,10 +42,11 @@ _state: dict[str, int] = {}
 
 def _test_camera_dirs() -> list[Path]:
     """List all cam_* directories under test_data/."""
-    if not TEST_DATA_DIR.is_dir():
+    test_data_dir = _test_data_dir()
+    if not test_data_dir.is_dir():
         return []
     dirs = sorted(
-        [d for d in TEST_DATA_DIR.iterdir() if d.is_dir() and d.name.startswith("cam_")],
+        [d for d in test_data_dir.iterdir() if d.is_dir() and d.name.startswith("cam_")],
         key=lambda d: d.name,
     )
     return dirs
@@ -49,7 +60,7 @@ def test_camera_list() -> list[dict[str, str]]:
 
 def grab_test_frame(camera_id: str) -> np.ndarray | None:
     """Read next image for the virtual camera, rotating round-robin."""
-    cam_dir = TEST_DATA_DIR / camera_id
+    cam_dir = _test_data_dir() / camera_id
     if not cam_dir.is_dir():
         return None
 
