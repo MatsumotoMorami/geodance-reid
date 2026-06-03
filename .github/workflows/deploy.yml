@@ -91,6 +91,10 @@ jobs:
               "APP_PORT": os.environ["APP_PORT"],
               "REID_PORT": os.environ["REID_PORT"],
               "REID_BACKEND_FETCH_MS": "180000",
+              "REID_PER_CAMERA_TRACK": "0",
+              "REID_GLOBAL_MATCH_ORDER": "1",
+              "REID_USE_POSE": "0",
+              "REID_MATCH_THRESHOLD": "0.60",
           }
           Path(".deploy.env").write_text(
               "".join(f"{k}={encode_dotenv_value(v)}\n" for k, v in values.items()),
