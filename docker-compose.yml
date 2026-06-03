@@ -51,8 +51,11 @@ services:
       REID_USE_COLOR_FEATURES: ${REID_USE_COLOR_FEATURES:-1}
       REID_USE_POSE: ${REID_USE_POSE:-1}
       DETECTIONS_STATS: ${DETECTIONS_STATS:-1}
+      TEST_DATA_DIR: /app/backend/reid_service/test_data
     ports:
       - "${REID_PORT:-18890}:8890"
+    volumes:
+      - ./backend/reid_service/test_data:/app/backend/reid_service/test_data:ro
 
 volumes:
   web_data:
