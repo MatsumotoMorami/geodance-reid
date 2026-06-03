@@ -146,36 +146,41 @@ jobs:
         run: |
           set -euo pipefail
           REMOTE="${SSH_USER}@${SSH_HOST}"
-          ssh -i "$HOME/.ssh/deploy_key" -p "$SSH_PORT" "$REMOTE" "set -eu
-            if [ \"$AUTO_INIT_TEST_DATA\" != \"1\" ]; then
-              echo '[deploy] AUTO_INIT_TEST_DATA is disabled. Skip test-data init.'
-              exit 0
-            fi
+          ssh -i "$HOME/.ssh/deploy_key" -p "$SSH_PORT" "$REMOTE" sh -se -- "$AUTO_INIT_TEST_DATA" "$REID_TEST_DATA_PRESET" "$DEPLOY_DIR" <<'REMOTE_SCRIPT'
+          set -eu
+          AUTO_INIT_TEST_DATA="$1"
+          REID_TEST_DATA_PRESET="$2"
+          DEPLOY_DIR="$3"
 
-            cd '$DEPLOY_DIR'
-            mkdir -p backend/reid_service/test_data
+          if [ "$AUTO_INIT_TEST_DATA" != "1" ]; then
+            echo '[deploy] AUTO_INIT_TEST_DATA is disabled. Skip test-data init.'
+            exit 0
+          fi
 
-            has_data=0
-            if find backend/reid_service/test_data -maxdepth 3 -type f \\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' \\) -print -quit | grep -q .; then
-              has_data=1
-            fi
+          cd "$DEPLOY_DIR"
+          mkdir -p backend/reid_service/test_data
 
-            if [ \"$has_data\" -eq 1 ]; then
-              echo '[deploy] Existing test data found, skip initialization.'
-              exit 0
-            fi
+          has_data=0
+          if find backend/reid_service/test_data -maxdepth 3 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' \) -print -quit | grep -q .; then
+            has_data=1
+          fi
 
-            echo '[deploy] No test data found, initialize with preset:' \"$REID_TEST_DATA_PRESET\"
-            if docker compose version >/dev/null 2>&1; then
-              docker compose run --rm reid python prepare_test_data.py \"$REID_TEST_DATA_PRESET\" || {
-                echo '[deploy] WARN: test data initialization failed, dataset mode may be unavailable.' >&2
-              }
-            elif command -v docker-compose >/dev/null 2>&1; then
-              docker-compose run --rm reid python prepare_test_data.py \"$REID_TEST_DATA_PRESET\" || {
-                echo '[deploy] WARN: test data initialization failed, dataset mode may be unavailable.' >&2
-              }
-            else
-              echo 'Docker Compose is not installed on the server.' >&2
-              exit 1
-            fi
-          "
+          if [ "$has_data" -eq 1 ]; then
+            echo '[deploy] Existing test data found, skip initialization.'
+            exit 0
+          fi
+
+          echo '[deploy] No test data found, initialize with preset:' "$REID_TEST_DATA_PRESET"
+          if docker compose version >/dev/null 2>&1; then
+            docker compose run --rm reid python prepare_test_data.py "$REID_TEST_DATA_PRESET" || {
+              echo '[deploy] WARN: test data initialization failed, dataset mode may be unavailable.' >&2
+            }
+          elif command -v docker-compose >/dev/null 2>&1; then
+            docker-compose run --rm reid python prepare_test_data.py "$REID_TEST_DATA_PRESET" || {
+              echo '[deploy] WARN: test data initialization failed, dataset mode may be unavailable.' >&2
+            }
+          else
+            echo 'Docker Compose is not installed on the server.' >&2
+            exit 1
+          fi
+          REMOTE_SCRIPT
