@@ -15,8 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DEPLOY_DIR: ${{ vars.DEPLOY_DIR || 'geodance-reid' }}
-      APP_PORT: ${{ vars.APP_PORT || '3000' }}
-      REID_PORT: ${{ vars.REID_PORT || '8890' }}
+      APP_PORT: ${{ vars.APP_PORT || '13000' }}
+      REID_PORT: ${{ vars.REID_PORT || '18890' }}
 
     steps:
       - name: Checkout

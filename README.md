@@ -142,8 +142,10 @@ docker compose up -d --build
 
 默认端口：
 
-- Web：`http://服务器IP:3000`
-- Re-ID 后端：`http://服务器IP:8890/health`
+- Web：`http://服务器IP:13000`
+- Re-ID 后端：`http://服务器IP:18890/health`
+
+如果服务器上这些端口也被占用，修改 `.env` 中的 `APP_PORT` / `REID_PORT` 后重新执行 `docker compose up -d`。
 
 Compose 会启动两个服务：
 
@@ -183,9 +185,11 @@ AUTH_ADMIN_PASSWORD
 
 ```text
 DEPLOY_DIR=geodance-reid
-APP_PORT=3000
-REID_PORT=8890
+APP_PORT=13000
+REID_PORT=18890
 ```
+
+没有设置 repo variables 时，workflow 默认使用 `APP_PORT=13000` 和 `REID_PORT=18890`，避免和服务器上常见的本地开发端口 `3000` 冲突。需要强制使用 `3000` 时，在 repo variables 里显式设置 `APP_PORT=3000`。
 
 ## 登录与用户数据
 

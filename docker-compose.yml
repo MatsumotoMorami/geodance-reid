@@ -18,7 +18,7 @@ services:
       REID_DETECTIONS_URL: http://reid:8890/detections
       REID_BACKEND_FETCH_MS: ${REID_BACKEND_FETCH_MS:-180000}
     ports:
-      - "${APP_PORT:-3000}:3000"
+      - "${APP_PORT:-13000}:3000"
     volumes:
       - web_data:/app/data
 
@@ -52,7 +52,7 @@ services:
       REID_USE_POSE: ${REID_USE_POSE:-1}
       DETECTIONS_STATS: ${DETECTIONS_STATS:-1}
     ports:
-      - "${REID_PORT:-8890}:8890"
+      - "${REID_PORT:-18890}:8890"
 
 volumes:
   web_data:
