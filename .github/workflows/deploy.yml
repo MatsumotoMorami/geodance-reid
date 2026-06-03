@@ -17,6 +17,8 @@ jobs:
       DEPLOY_DIR: ${{ vars.DEPLOY_DIR || 'geodance-reid' }}
       APP_PORT: ${{ vars.APP_PORT || '13000' }}
       REID_PORT: ${{ vars.REID_PORT || '18890' }}
+      AUTO_INIT_TEST_DATA: ${{ vars.AUTO_INIT_TEST_DATA || '1' }}
+      REID_TEST_DATA_PRESET: ${{ vars.REID_TEST_DATA_PRESET || 'lab6' }}
 
     steps:
       - name: Checkout
@@ -130,6 +132,55 @@ jobs:
             elif command -v docker-compose >/dev/null 2>&1; then
               docker-compose up -d --build --remove-orphans
               docker-compose ps
+            else
+              echo 'Docker Compose is not installed on the server.' >&2
+              exit 1
+            fi
+          "
+
+      - name: Initialize test data on deploy
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -euo pipefail
+          REMOTE="${SSH_USER}@${SSH_HOST}"
+          ssh -i "$HOME/.ssh/deploy_key" -p "$SSH_PORT" "$REMOTE" "set -eu
+            if [ \"$AUTO_INIT_TEST_DATA\" != \"1\" ]; then
+              echo '[deploy] AUTO_INIT_TEST_DATA is disabled. Skip test-data init.'
+              exit 0
+            fi
+
+            cd '$DEPLOY_DIR'
+            mkdir -p backend/reid_service/test_data
+
+            has_data=0
+            for cam_dir in backend/reid_service/test_data/cam_*; do
+              if [ ! -d \"$cam_dir\" ]; then
+                continue
+              fi
+              if find \"$cam_dir\" -maxdepth 1 -type f \\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' \\) | grep -q .; then
+                has_data=1
+                break
+              fi
+            done
+
+            if [ \"$has_data\" -eq 1 ]; then
+              echo '[deploy] Existing test data found, skip initialization.'
+              exit 0
+            fi
+
+            echo '[deploy] No test data found, initialize with preset:' \"$REID_TEST_DATA_PRESET\"
+            if docker compose version >/dev/null 2>&1; then
+              docker compose run --rm reid python prepare_test_data.py \"$REID_TEST_DATA_PRESET\" || {
+                echo '[deploy] WARN: test data initialization failed, dataset mode may be unavailable.' >&2
+              }
+            elif command -v docker-compose >/dev/null 2>&1; then
+              docker-compose run --rm reid python prepare_test_data.py \"$REID_TEST_DATA_PRESET\" || {
+                echo '[deploy] WARN: test data initialization failed, dataset mode may be unavailable.' >&2
+              }
             else
               echo 'Docker Compose is not installed on the server.' >&2
               exit 1

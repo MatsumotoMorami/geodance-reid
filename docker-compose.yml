@@ -55,7 +55,7 @@ services:
     ports:
       - "${REID_PORT:-18890}:8890"
     volumes:
-      - ./backend/reid_service/test_data:/app/backend/reid_service/test_data:ro
+      - ./backend/reid_service/test_data:/app/backend/reid_service/test_data:rw
 
 volumes:
   web_data:

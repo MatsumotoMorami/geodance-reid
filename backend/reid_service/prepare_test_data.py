@@ -20,6 +20,7 @@ import os
 import shutil
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 TEST_DATA_DIR = Path(__file__).resolve().parent / "test_data"
@@ -82,6 +83,20 @@ def check_ffmpeg() -> bool:
         return False
 
 
+def download_video(url: str, path: Path) -> None:
+    print(f"\nDownloading camera {path.stem.split('_c')[-1]}...")
+    try:
+        with urllib.request.urlopen(url, timeout=180) as response:
+            if response.status != 200:
+                raise RuntimeError(f"HTTP {response.status}")
+            with open(path, "wb") as f:
+                shutil.copyfileobj(response, f)
+        size_mb = path.stat().st_size / (1024 * 1024)
+        print(f"  Downloaded: {size_mb:.1f} MB")
+    except Exception as e:
+        raise RuntimeError(f"Download failed for {url}: {e}") from e
+
+
 def main() -> None:
     os.chdir(Path(__file__).resolve().parent)
 
@@ -120,15 +135,9 @@ def main() -> None:
 
         # Download
         if not video_path.exists():
-            print(f"\nDownloading camera {cam_idx}...")
             try:
-                subprocess.check_call(
-                    ["curl", "-L", "-o", str(video_path), url],
-                    timeout=300,
-                )
-                size_mb = video_path.stat().st_size / (1024 * 1024)
-                print(f"  Downloaded: {size_mb:.1f} MB")
-            except subprocess.CalledProcessError as e:
+                download_video(url, video_path)
+            except Exception as e:
                 print(f"  Download failed: {e}")
                 continue
 

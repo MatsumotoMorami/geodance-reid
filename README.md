@@ -187,9 +187,13 @@ AUTH_ADMIN_PASSWORD
 DEPLOY_DIR=geodance-reid
 APP_PORT=13000
 REID_PORT=18890
+AUTO_INIT_TEST_DATA=1
+REID_TEST_DATA_PRESET=lab6
 ```
 
-没有设置 repo variables 时，workflow 默认使用 `APP_PORT=13000` 和 `REID_PORT=18890`，避免和服务器上常见的本地开发端口 `3000` 冲突。需要强制使用 `3000` 时，在 repo variables 里显式设置 `APP_PORT=3000`。
+没有设置 repo variables 时，workflow 默认使用 `APP_PORT=13000`、`REID_PORT=18890` 和 `AUTO_INIT_TEST_DATA=1`。`AUTO_INIT_TEST_DATA=1` 会在部署后检查并按需执行 `prepare_test_data.py`；`REID_TEST_DATA_PRESET` 支持 `lab6|lab4|terrace1|passageway`，默认 `lab6`。如果你不希望自动下载测试集，设置 `AUTO_INIT_TEST_DATA=0`。
+
+注意：`AUTO_INIT_TEST_DATA=1` 仅在目标目录缺少 `test_data` 时才会触发下载与生成；初始化失败不会中断服务重启，但会在日志里打 warning，并保持相机模式可用。
 
 ## 登录与用户数据
 
