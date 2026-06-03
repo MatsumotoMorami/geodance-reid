@@ -463,6 +463,7 @@ export default function Dashboard() {
   const cameras = user?.cameras ?? [];
   const [data, setData] = useState<DemoPayload | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [datasetAvailable, setDatasetAvailable] = useState(false);
   const pollMsRef = useRef(8000);
   const pullInFlight = useRef(false);
   const [dataMode, setDataMode] = useState<"camera" | "dataset">("camera");
@@ -488,6 +489,7 @@ export default function Dashboard() {
       .then((info) => {
         if (cancelled) return;
         setDataMode(info.mode === "dataset" ? "dataset" : "camera");
+        setDatasetAvailable(Boolean(info.datasetAvailable));
       })
       .catch(() => {});
     return () => {
@@ -507,13 +509,18 @@ export default function Dashboard() {
       });
       if (!r.ok) {
         const ej = await r.json().catch(() => ({}));
-        throw new Error((ej as { message?: string }).message || `HTTP ${r.status}`);
+        const msg =
+          typeof (ej as { message?: unknown }).message === "string" ? (ej as { message: string }).message : `HTTP ${r.status}`;
+        throw new Error(msg || `HTTP ${r.status}`);
       }
       setDataMode(target);
+      if (target === "dataset") {
+        setDatasetAvailable(true);
+      }
       setData(null);
       setErr(null);
-    } catch {
-      setErr("切换失败");
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "切换失败");
     } finally {
       setModeSwitching(false);
     }
@@ -587,7 +594,7 @@ export default function Dashboard() {
           <button
             className="btn btn-primary compact"
             type="button"
-            disabled={modeSwitching}
+            disabled={modeSwitching || (dataMode === "camera" && !datasetAvailable)}
             onClick={handleModeToggle}
           >
             {modeSwitching ? "..." : dataMode === "camera" ? "摄像头" : "测试集"}
@@ -613,6 +620,10 @@ export default function Dashboard() {
           <StatCard label="数据源" value={data?.clientSource === "reid" ? "识别后端" : data?.clientSource === "mock" ? "模拟" : "—"} />
         </div>
       </header>
+
+      {dataMode === "camera" && !datasetAvailable ? (
+        <div className="alert alert-warning">测试集模式尚未可用：请先在 reid 服务生成 backend/reid_service/test_data，或在该目录挂载数据。</div>
+      ) : null}
 
       {err ? <div className="alert alert-error">{err}</div> : null}
 
