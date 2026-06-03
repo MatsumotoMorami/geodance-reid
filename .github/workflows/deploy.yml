@@ -18,7 +18,7 @@ jobs:
       APP_PORT: ${{ vars.APP_PORT || '13000' }}
       REID_PORT: ${{ vars.REID_PORT || '18890' }}
       AUTO_INIT_TEST_DATA: ${{ vars.AUTO_INIT_TEST_DATA || '1' }}
-      MARKET1501_DOWNLOAD_URL: ${{ vars.MARKET1501_DOWNLOAD_URL || 'http://188.138.127.15:81/Datasets/Market-1501-v15.09.15.zip' }}
+      MARKET1501_DOWNLOAD_URL: ${{ vars.MARKET1501_DOWNLOAD_URL || 'http://apache-mxnet.s3-accelerate.dualstack.amazonaws.com/gluon/dataset/Market-1501-v15.09.15.zip' }}
 
     steps:
       - name: Checkout

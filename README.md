@@ -188,7 +188,7 @@ DEPLOY_DIR=geodance-reid
 APP_PORT=13000
 REID_PORT=18890
 AUTO_INIT_TEST_DATA=1
-MARKET1501_DOWNLOAD_URL=http://188.138.127.15:81/Datasets/Market-1501-v15.09.15.zip
+MARKET1501_DOWNLOAD_URL=http://apache-mxnet.s3-accelerate.dualstack.amazonaws.com/gluon/dataset/Market-1501-v15.09.15.zip
 ```
 
 没有设置 repo variables 时，workflow 默认使用 `APP_PORT=13000`、`REID_PORT=18890` 和 `AUTO_INIT_TEST_DATA=1`。`AUTO_INIT_TEST_DATA=1` 会在部署后检查 `runtime/test_data`；如果没有测试图片，会先在服务器下载并解压 Market-1501，再执行 `prepare_market1501_test_data.py market1501/Market-1501-v15.09.15 --output test_data --force` 生成测试集模式使用的数据。如果默认下载地址不可用，可通过 `MARKET1501_DOWNLOAD_URL` 换成你自己的 zip 镜像地址。
