@@ -567,6 +567,16 @@ a.btn {
   object-fit: cover;
 }
 
+.preview-card .video-frame img {
+  object-fit: contain;
+}
+
+.reid-overlay-layer {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+}
+
 .low-res-stream {
   filter: blur(0.6px) contrast(0.95);
 }
@@ -625,7 +635,7 @@ a.btn {
 .reid-box span {
   position: absolute;
   left: -2px;
-  top: -24px;
+  top: -2px;
   min-height: 22px;
   padding: 2px 7px;
   border-radius: 7px 7px 7px 0;

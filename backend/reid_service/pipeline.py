@@ -170,6 +170,16 @@ def _xyxy_to_norm_xywh(xyxy: list[float], w: int, h: int) -> dict[str, float]:
     return {"x": float(x1) / float(w), "y": float(y1) / float(h), "w": bw, "h": bh}
 
 
+def _clamp_norm_box(box: dict[str, Any]) -> dict[str, float] | None:
+    x = max(0.0, min(1.0, float(box.get("x", 0.0))))
+    y = max(0.0, min(1.0, float(box.get("y", 0.0))))
+    right = max(0.0, min(1.0, float(box.get("x", 0.0)) + float(box.get("w", 0.0))))
+    bottom = max(0.0, min(1.0, float(box.get("y", 0.0)) + float(box.get("h", 0.0))))
+    if right <= x or bottom <= y:
+        return None
+    return {"x": x, "y": y, "w": right - x, "h": bottom - y}
+
+
 def _encode_preview_jpeg(bgr: np.ndarray) -> bytes | None:
     q = int(os.environ.get("DETECTION_PREVIEW_JPEG_QUALITY", "72"))
     q = max(40, min(95, q))
@@ -623,7 +633,17 @@ def build_detections_payload(
                     }
                 )
 
-        dets_out = merge_output_layer_dets(weak_dets + strong_dets)
+        dets_out = []
+        for d in merge_output_layer_dets(weak_dets + strong_dets):
+            box = d.get("box")
+            if not isinstance(box, dict):
+                continue
+            clamped = _clamp_norm_box(box)
+            if clamped is None:
+                continue
+            next_d = dict(d)
+            next_d["box"] = clamped
+            dets_out.append(next_d)
         if want_stats:
             st: dict[str, Any] = {
                 "cameraId": cid,

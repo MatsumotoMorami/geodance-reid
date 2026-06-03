@@ -57,6 +57,10 @@ function pickNum(r: Record<string, unknown>, ...keys: string[]): number | undefi
   return undefined;
 }
 
+function clamp01(n: number): number {
+  return Math.min(1, Math.max(0, n));
+}
+
 function normBoxFrom(r: Record<string, unknown>): NormBox | null {
   const x = pickNum(r, "x", "X");
   const y = pickNum(r, "y", "Y");
@@ -64,7 +68,12 @@ function normBoxFrom(r: Record<string, unknown>): NormBox | null {
   const h = pickNum(r, "h", "height", "H");
   if (x === undefined || y === undefined || w === undefined || h === undefined) return null;
   if (w <= 0 || h <= 0) return null;
-  return { x, y, w, h };
+  const left = clamp01(x);
+  const top = clamp01(y);
+  const right = clamp01(x + w);
+  const bottom = clamp01(y + h);
+  if (right <= left || bottom <= top) return null;
+  return { x: left, y: top, w: right - left, h: bottom - top };
 }
 
 function detectionFrom(r: Record<string, unknown>): Detection | null {

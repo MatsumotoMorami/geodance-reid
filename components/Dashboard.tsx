@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import type { CameraFrame, DemoPayload, DetectionsDebugCamera } from "@/lib/types";
+import type { CameraFrame, DemoPayload, DetectionsDebugCamera, NormBox } from "@/lib/types";
 import type { CameraDef, CameraTier } from "@/lib/cameras";
 
 export type AuthUser = {
@@ -47,13 +47,28 @@ function debugSummary(stat?: DetectionsDebugCamera): string | null {
     .join(" · ");
 }
 
+function clamp01(n: number): number {
+  return Math.min(1, Math.max(0, n));
+}
+
+function boundedBox(box: NormBox): NormBox | null {
+  const left = clamp01(box.x);
+  const top = clamp01(box.y);
+  const right = clamp01(box.x + box.w);
+  const bottom = clamp01(box.y + box.h);
+  if (right <= left || bottom <= top) return null;
+  return { x: left, y: top, w: right - left, h: bottom - top };
+}
+
 function DetectionOverlays({ frame }: { frame: CameraFrame }) {
   return (
     <>
       {[...frame.detections]
         .sort((a, b) => (a.lowConfidence === b.lowConfidence ? 0 : a.lowConfidence ? -1 : 1))
         .map((d, idx) => {
-          const { x, y, w, h } = d.box;
+          const safeBox = boundedBox(d.box);
+          if (!safeBox) return null;
+          const { x, y, w, h } = safeBox;
           const weak = Boolean(d.lowConfidence);
           const confStr = d.confidence !== undefined ? ` ${(d.confidence * 100).toFixed(0)}%` : "";
           return (
@@ -325,10 +340,51 @@ function DetectionPreviewTile({ cam, payload }: { cam: CameraDef; payload: DemoP
   const isMock = payload?.clientSource === "mock";
   const bust = payload?.updatedAt ?? 0;
   const [imgErr, setImgErr] = useState(false);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
+  const [imageBounds, setImageBounds] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+
+  const updateImageBounds = useCallback(() => {
+    const el = frameRef.current;
+    if (!el || !naturalSize || naturalSize.w <= 0 || naturalSize.h <= 0) {
+      setImageBounds(null);
+      return;
+    }
+    const cw = el.clientWidth;
+    const ch = el.clientHeight;
+    if (cw <= 0 || ch <= 0) return;
+    const imageRatio = naturalSize.w / naturalSize.h;
+    const frameRatio = cw / ch;
+    let width = cw;
+    let height = ch;
+    let left = 0;
+    let top = 0;
+    if (frameRatio > imageRatio) {
+      height = ch;
+      width = ch * imageRatio;
+      left = (cw - width) / 2;
+    } else {
+      width = cw;
+      height = cw / imageRatio;
+      top = (ch - height) / 2;
+    }
+    setImageBounds({ left, top, width, height });
+  }, [naturalSize]);
 
   useEffect(() => {
     setImgErr(false);
+    setNaturalSize(null);
+    setImageBounds(null);
   }, [bust, cam.id]);
+
+  useEffect(() => {
+    updateImageBounds();
+    const el = frameRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => updateImageBounds());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [updateImageBounds]);
 
   return (
     <article className="media-card preview-card">
@@ -336,7 +392,7 @@ function DetectionPreviewTile({ cam, payload }: { cam: CameraDef; payload: DemoP
         <h3>识别帧 · {cam.label}</h3>
         <span className="badge badge-plain">{frame?.detections.length ?? 0} 框</span>
       </div>
-      <div className="video-frame">
+      <div className="video-frame" ref={frameRef}>
         {isMock ? (
           <div className="media-placeholder">N/A</div>
         ) : imgErr ? (
@@ -345,10 +401,29 @@ function DetectionPreviewTile({ cam, payload }: { cam: CameraDef; payload: DemoP
           <img
             src={`/api/detection-preview/${encodeURIComponent(cam.id)}?v=${bust}`}
             alt=""
+            onLoad={(e) => {
+              setImgErr(false);
+              setNaturalSize({
+                w: e.currentTarget.naturalWidth || 16,
+                h: e.currentTarget.naturalHeight || 9,
+              });
+            }}
             onError={() => setImgErr(true)}
           />
         )}
-        {!isMock && !imgErr && frame && frame.detections.length > 0 ? <DetectionOverlays frame={frame} /> : null}
+        {!isMock && !imgErr && frame && frame.detections.length > 0 && imageBounds ? (
+          <div
+            className="reid-overlay-layer"
+            style={{
+              left: imageBounds.left,
+              top: imageBounds.top,
+              width: imageBounds.width,
+              height: imageBounds.height,
+            }}
+          >
+            <DetectionOverlays frame={frame} />
+          </div>
+        ) : null}
       </div>
     </article>
   );
