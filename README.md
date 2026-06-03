@@ -188,12 +188,12 @@ DEPLOY_DIR=geodance-reid
 APP_PORT=13000
 REID_PORT=18890
 AUTO_INIT_TEST_DATA=1
-REID_TEST_DATA_PRESET=lab6
+MARKET1501_DOWNLOAD_URL=http://188.138.127.15:81/Datasets/Market-1501-v15.09.15.zip
 ```
 
-没有设置 repo variables 时，workflow 默认使用 `APP_PORT=13000`、`REID_PORT=18890` 和 `AUTO_INIT_TEST_DATA=1`。`AUTO_INIT_TEST_DATA=1` 会在部署后检查并按需执行 `prepare_test_data.py`；`REID_TEST_DATA_PRESET` 支持 `lab6|lab4|terrace1|passageway`，默认 `lab6`。如果你不希望自动下载测试集，设置 `AUTO_INIT_TEST_DATA=0`。
+没有设置 repo variables 时，workflow 默认使用 `APP_PORT=13000`、`REID_PORT=18890` 和 `AUTO_INIT_TEST_DATA=1`。`AUTO_INIT_TEST_DATA=1` 会在部署后检查 `runtime/test_data`；如果没有测试图片，会先在服务器下载并解压 Market-1501，再执行 `prepare_market1501_test_data.py market1501/Market-1501-v15.09.15 --output test_data --force` 生成测试集模式使用的数据。如果默认下载地址不可用，可通过 `MARKET1501_DOWNLOAD_URL` 换成你自己的 zip 镜像地址。
 
-注意：`AUTO_INIT_TEST_DATA=1` 仅在目标目录缺少 `test_data` 时才会触发下载与生成；初始化失败不会中断服务重启，但会在日志里打 warning，并保持相机模式可用。
+注意：部署生成的数据保存在服务器 `runtime/` 目录下，workflow 更新代码时会保留该目录，避免每次部署重复下载。
 
 ## 登录与用户数据
 
@@ -253,6 +253,7 @@ python prepare_test_data.py
 如果本地已有 Market-1501，可以生成独立的跨摄像头 Re-ID 测试集，不覆盖默认 `test_data`：
 
 ```bash
+python backend/reid_service/ensure_market1501.py
 python backend/reid_service/prepare_market1501_test_data.py /Users/test/Downloads/Market-1501-v15.09.15
 TEST_DATA_DIR=test_data_market1501 \
 YOLO_MAX_PER_FRAME=1 \

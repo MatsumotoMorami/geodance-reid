@@ -18,7 +18,7 @@ jobs:
       APP_PORT: ${{ vars.APP_PORT || '13000' }}
       REID_PORT: ${{ vars.REID_PORT || '18890' }}
       AUTO_INIT_TEST_DATA: ${{ vars.AUTO_INIT_TEST_DATA || '1' }}
-      REID_TEST_DATA_PRESET: ${{ vars.REID_TEST_DATA_PRESET || 'lab6' }}
+      MARKET1501_DOWNLOAD_URL: ${{ vars.MARKET1501_DOWNLOAD_URL || 'http://188.138.127.15:81/Datasets/Market-1501-v15.09.15.zip' }}
 
     steps:
       - name: Checkout
@@ -111,7 +111,7 @@ jobs:
           scp -i "$HOME/.ssh/deploy_key" -P "$SSH_PORT" "$RUNNER_TEMP/geodance-reid.tar.gz" "$REMOTE:$ARCHIVE"
           scp -i "$HOME/.ssh/deploy_key" -P "$SSH_PORT" .deploy.env "$REMOTE:$DEPLOY_DIR/.env"
           ssh -i "$HOME/.ssh/deploy_key" -p "$SSH_PORT" "$REMOTE" "set -eu
-            find '$DEPLOY_DIR' -mindepth 1 -maxdepth 1 ! -name '.env' ! -name 'data' -exec rm -rf {} +
+            find '$DEPLOY_DIR' -mindepth 1 -maxdepth 1 ! -name '.env' ! -name 'data' ! -name 'runtime' -exec rm -rf {} +
             tar -xzf '$ARCHIVE' -C '$DEPLOY_DIR'
             rm -f '$ARCHIVE'
           "
@@ -146,10 +146,10 @@ jobs:
         run: |
           set -euo pipefail
           REMOTE="${SSH_USER}@${SSH_HOST}"
-          ssh -i "$HOME/.ssh/deploy_key" -p "$SSH_PORT" "$REMOTE" sh -se -- "$AUTO_INIT_TEST_DATA" "$REID_TEST_DATA_PRESET" "$DEPLOY_DIR" <<'REMOTE_SCRIPT'
+          ssh -i "$HOME/.ssh/deploy_key" -p "$SSH_PORT" "$REMOTE" sh -se -- "$AUTO_INIT_TEST_DATA" "$MARKET1501_DOWNLOAD_URL" "$DEPLOY_DIR" <<'REMOTE_SCRIPT'
           set -eu
           AUTO_INIT_TEST_DATA="$1"
-          REID_TEST_DATA_PRESET="$2"
+          MARKET1501_DOWNLOAD_URL="$2"
           DEPLOY_DIR="$3"
 
           if [ "$AUTO_INIT_TEST_DATA" != "1" ]; then
@@ -158,10 +158,10 @@ jobs:
           fi
 
           cd "$DEPLOY_DIR"
-          mkdir -p backend/reid_service/test_data
+          mkdir -p runtime/test_data runtime/market1501
 
           has_data=0
-          if find backend/reid_service/test_data -maxdepth 3 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' \) -print -quit | grep -q .; then
+          if find runtime/test_data -maxdepth 3 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' \) -print -quit | grep -q .; then
             has_data=1
           fi
 
@@ -170,15 +170,13 @@ jobs:
             exit 0
           fi
 
-          echo '[deploy] No test data found, initialize with preset:' "$REID_TEST_DATA_PRESET"
+          echo '[deploy] No test data found, initialize from Market-1501.'
           if docker compose version >/dev/null 2>&1; then
-            docker compose run --rm reid python prepare_test_data.py "$REID_TEST_DATA_PRESET" || {
-              echo '[deploy] WARN: test data initialization failed, dataset mode may be unavailable.' >&2
-            }
+            docker compose run --rm -e MARKET1501_DOWNLOAD_URL="$MARKET1501_DOWNLOAD_URL" reid python ensure_market1501.py --root market1501/Market-1501-v15.09.15
+            docker compose run --rm reid python prepare_market1501_test_data.py market1501/Market-1501-v15.09.15 --output test_data --force
           elif command -v docker-compose >/dev/null 2>&1; then
-            docker-compose run --rm reid python prepare_test_data.py "$REID_TEST_DATA_PRESET" || {
-              echo '[deploy] WARN: test data initialization failed, dataset mode may be unavailable.' >&2
-            }
+            docker-compose run --rm -e MARKET1501_DOWNLOAD_URL="$MARKET1501_DOWNLOAD_URL" reid python ensure_market1501.py --root market1501/Market-1501-v15.09.15
+            docker-compose run --rm reid python prepare_market1501_test_data.py market1501/Market-1501-v15.09.15 --output test_data --force
           else
             echo 'Docker Compose is not installed on the server.' >&2
             exit 1

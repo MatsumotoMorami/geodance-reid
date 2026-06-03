@@ -36,3 +36,5 @@ backend/reid_service/test_data/_*/
 backend/reid_service/test_data/*.zip
 backend/reid_service/test_data_market1501/
 backend/reid_service/test_data_1080p/
+backend/reid_service/market1501/
+runtime/
