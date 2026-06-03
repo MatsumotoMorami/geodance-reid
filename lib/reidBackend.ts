@@ -292,15 +292,35 @@ function getReidBaseUrl(): string | undefined {
 
 export async function fetchReidMode(): Promise<{ mode: string; datasetAvailable: boolean }> {
   const base = getReidBaseUrl();
-  if (!base) return { mode: "camera", datasetAvailable: false };
+  if (!base) {
+    throw new Error("ReID backend URL not configured");
+  }
   const r = await fetch(`${base}/mode`, { cache: "no-store" });
-  if (!r.ok) return { mode: "camera", datasetAvailable: false };
+  if (!r.ok) {
+    const raw = await r.text().catch(() => "");
+    let msg = `HTTP ${r.status}`;
+    try {
+      if (raw) {
+        const payload = JSON.parse(raw) as { message?: string; error?: string };
+        msg = payload.message || payload.error || msg;
+      }
+    } catch {
+      if (raw) {
+        msg = raw.slice(0, 240);
+      }
+    }
+    const err = new Error(msg) as Error & { status: number };
+    err.status = r.status;
+    throw err;
+  }
   return r.json() as Promise<{ mode: string; datasetAvailable: boolean }>;
 }
 
 export async function setReidMode(mode: "camera" | "dataset"): Promise<{ mode: string }> {
   const base = getReidBaseUrl();
-  if (!base) throw new Error("ReID backend URL not configured");
+  if (!base) {
+    throw new Error("ReID backend URL not configured");
+  }
   const r = await fetch(`${base}/mode`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -309,7 +329,10 @@ export async function setReidMode(mode: "camera" | "dataset"): Promise<{ mode: s
   });
   if (!r.ok) {
     const err = await r.json().catch(() => ({ message: `HTTP ${r.status}` }));
-    throw new Error((err as { message?: string }).message || `HTTP ${r.status}`);
+    const msg = (err as { message?: string }).message || `HTTP ${r.status}`;
+    const e = new Error(msg) as Error & { status: number };
+    e.status = r.status;
+    throw e;
   }
   return r.json() as Promise<{ mode: string }>;
 }
