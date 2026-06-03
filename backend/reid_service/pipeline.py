@@ -71,10 +71,14 @@ def _gallery_max_tta_enabled() -> bool:
 
 
 def _grab_pair(cam: dict[str, str]) -> tuple[str, Any]:
-    url = cam["url"]
-    if rtsp_probe_is_404(url):
-        return cam["id"], None
-    return cam["id"], grab_rtsp_frame(url, camera_id=cam["id"])
+    cid = cam["id"]
+    try:
+        url = cam["url"]
+        if rtsp_probe_is_404(url):
+            return cid, None
+        return cid, grab_rtsp_frame(url, camera_id=cid)
+    except Exception:
+        return cid, None
 
 
 def _maybe_refresh_corrupt_frame(cid: str, url: str, frame: np.ndarray) -> np.ndarray:
@@ -380,113 +384,120 @@ def build_detections_payload(
 
     for cam in active_cameras:
         cid = cam["id"]
-        frame = by_id.get(cid)
-        if frame is None:
-            tick_by_cid[cid] = {"online": False}
-            continue
-
-        skip_yolo = (
-            os.environ.get("REID_SKIP_YOLO_ON_CORRUPT_FRAME", "0").strip().lower() in ("1", "true", "yes", "on")
-            and frame_looks_corrupt(frame)
-        )
-
-        H, W = frame.shape[:2]
-        yolo_n = 0
-        yolo_raw_n = 0
-        embed_fail = 0
-        passed_conf = 0
-        passed_minside = 0
-        passed_shape = 0
-
-        if skip_yolo:
-            persons_raw = []
-        else:
-            try:
-                persons_raw = detect_persons(frame)
-            except Exception:
-                persons_raw = []
-        yolo_raw_n = len(persons_raw)
-        persons = dedupe_person_boxes(persons_raw)
-        yolo_n = len(persons)
-
-        # Pose detection: extract keypoints and assign to YOLO detections for same-frame dedup
-        _use_pose = os.environ.get("REID_USE_POSE", "1").strip() in ("1", "true", "yes", "on")
-        if _use_pose and not skip_yolo:
-            try:
-                pose_dets = detect_poses(frame)
-                assign_poses_to_detections(persons, pose_dets)
-            except Exception:
-                pass
-
-        strong_rows: list[dict[str, Any]] = []
-        for p in persons:
-            if not yolo_score_ok(p):
+        try:
+            frame = by_id.get(cid)
+            if frame is None:
+                tick_by_cid[cid] = {"online": False}
                 continue
-            passed_conf += 1
-            xyxy = p["xyxy"]
-            x1i, y1i, x2i, y2i = _pad_xyxy(xyxy, W, H, pad)
-            if x2i - x1i < min_side or y2i - y1i < min_side:
-                continue
-            passed_minside += 1
-            if not bbox_plausible_person(x1i, y1i, x2i, y2i, W, H):
-                continue
-            passed_shape += 1
-            crop = frame[y1i:y2i, x1i:x2i]
-            feat: np.ndarray | None = None
-            feat_alt: np.ndarray | None = None
-            _use_color = os.environ.get("REID_USE_COLOR_FEATURES", "1").strip() in ("1", "true", "yes", "on")
-            try:
-                if _use_color:
-                    from hybrid_embedder import color_augmented_embed
-                    crop_h = y2i - y1i
-                    if max_tta:
-                        # Gallery max-TTA: get raw original/flipped features
-                        f0 = color_augmented_embed(embedder, crop, crop_h=crop_h, tta=False)
-                        f1 = color_augmented_embed(embedder, cv2.flip(crop, 1), crop_h=crop_h, tta=False)
-                        feat, feat_alt = f0, f1
-                    else:
-                        feat = color_augmented_embed(embedder, crop, crop_h=crop_h)
-                elif max_tta:
-                    feat, feat_alt = embedder.embed_crop_bgr_mirror_pair(crop)
-                else:
-                    feat = embedder.embed_crop_bgr(crop)
-            except Exception:
-                embed_fail += 1
-                if os.environ.get("SKIP_REID_FALLBACK", "").strip() != "1":
-                    try:
-                        feat = fallback_reid_vector(crop, camera_id=cid, box_xyxy=(x1i, y1i, x2i, y2i))
-                        feat_alt = None
-                    except Exception:
-                        feat = None
-            if feat is None:
-                continue
-            crop_w, crop_h = x2i - x1i, y2i - y1i
-            box = _xyxy_to_norm_xywh([float(x1i), float(y1i), float(x2i), float(y2i)], W, H)
-            strong_rows.append(
-                {
-                    "box": box,
-                    "_feat": feat,
-                    "_feat_alt": feat_alt,
-                    "_conf": float(p.get("conf", 0.0)),
-                    "_no_new_id": (crop_w < min_side_new and crop_h < min_side_new),
-                    "_pose_vec": p.get("_pose_vec"),
-                }
+
+            skip_yolo = (
+                os.environ.get("REID_SKIP_YOLO_ON_CORRUPT_FRAME", "0").strip().lower()
+                in ("1", "true", "yes", "on")
+                and frame_looks_corrupt(frame)
             )
-        tick_by_cid[cid] = {
-            "online": True,
-            "frame": frame,
-            "H": H,
-            "W": W,
-            "skip_yolo": skip_yolo,
-            "persons": persons,
-            "strong_rows": strong_rows,
-            "yolo_n": yolo_n,
-            "yolo_raw_n": yolo_raw_n,
-            "embed_fail": embed_fail,
-            "passed_conf": passed_conf,
-            "passed_minside": passed_minside,
-            "passed_shape": passed_shape,
-        }
+
+            H, W = frame.shape[:2]
+            yolo_n = 0
+            yolo_raw_n = 0
+            embed_fail = 0
+            passed_conf = 0
+            passed_minside = 0
+            passed_shape = 0
+
+            if skip_yolo:
+                persons_raw = []
+            else:
+                try:
+                    persons_raw = detect_persons(frame)
+                except Exception:
+                    persons_raw = []
+            yolo_raw_n = len(persons_raw)
+            persons = dedupe_person_boxes(persons_raw)
+            yolo_n = len(persons)
+
+            # Pose detection: extract keypoints and assign to YOLO detections for same-frame dedup
+            _use_pose = os.environ.get("REID_USE_POSE", "1").strip() in ("1", "true", "yes", "on")
+            if _use_pose and not skip_yolo:
+                try:
+                    pose_dets = detect_poses(frame)
+                    assign_poses_to_detections(persons, pose_dets)
+                except Exception:
+                    pass
+
+            strong_rows: list[dict[str, Any]] = []
+            for p in persons:
+                if not yolo_score_ok(p):
+                    continue
+                passed_conf += 1
+                xyxy = p["xyxy"]
+                x1i, y1i, x2i, y2i = _pad_xyxy(xyxy, W, H, pad)
+                if x2i - x1i < min_side or y2i - y1i < min_side:
+                    continue
+                passed_minside += 1
+                if not bbox_plausible_person(x1i, y1i, x2i, y2i, W, H):
+                    continue
+                passed_shape += 1
+                crop = frame[y1i:y2i, x1i:x2i]
+                feat: np.ndarray | None = None
+                feat_alt: np.ndarray | None = None
+                _use_color = os.environ.get("REID_USE_COLOR_FEATURES", "1").strip() in (
+                    "1", "true", "yes", "on"
+                )
+                try:
+                    if _use_color:
+                        from hybrid_embedder import color_augmented_embed
+
+                        crop_h = y2i - y1i
+                        if max_tta:
+                            # Gallery max-TTA: get raw original/flipped features
+                            f0 = color_augmented_embed(embedder, crop, crop_h=crop_h, tta=False)
+                            f1 = color_augmented_embed(embedder, cv2.flip(crop, 1), crop_h=crop_h, tta=False)
+                            feat, feat_alt = f0, f1
+                        else:
+                            feat = color_augmented_embed(embedder, crop, crop_h=crop_h)
+                    elif max_tta:
+                        feat, feat_alt = embedder.embed_crop_bgr_mirror_pair(crop)
+                    else:
+                        feat = embedder.embed_crop_bgr(crop)
+                except Exception:
+                    embed_fail += 1
+                    if os.environ.get("SKIP_REID_FALLBACK", "").strip() != "1":
+                        try:
+                            feat = fallback_reid_vector(crop, camera_id=cid, box_xyxy=(x1i, y1i, x2i, y2i))
+                            feat_alt = None
+                        except Exception:
+                            feat = None
+                if feat is None:
+                    continue
+                crop_w, crop_h = x2i - x1i, y2i - y1i
+                box = _xyxy_to_norm_xywh([float(x1i), float(y1i), float(x2i), float(y2i)], W, H)
+                strong_rows.append(
+                    {
+                        "box": box,
+                        "_feat": feat,
+                        "_feat_alt": feat_alt,
+                        "_conf": float(p.get("conf", 0.0)),
+                        "_no_new_id": (crop_w < min_side_new and crop_h < min_side_new),
+                        "_pose_vec": p.get("_pose_vec"),
+                    }
+                )
+            tick_by_cid[cid] = {
+                "online": True,
+                "frame": frame,
+                "H": H,
+                "W": W,
+                "skip_yolo": skip_yolo,
+                "persons": persons,
+                "strong_rows": strong_rows,
+                "yolo_n": yolo_n,
+                "yolo_raw_n": yolo_raw_n,
+                "embed_fail": embed_fail,
+                "passed_conf": passed_conf,
+                "passed_minside": passed_minside,
+                "passed_shape": passed_shape,
+            }
+        except Exception:
+            tick_by_cid[cid] = {"online": False}
 
     use_global = global_match_order_enabled()
     if use_global:
